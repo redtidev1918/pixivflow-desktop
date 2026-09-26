@@ -112,7 +112,7 @@ versions this build bundles:
 {
   "schemaVersion": 1,
   "components": {
-    "pixivflow": { "version": "3.0.1" },
+    "pixivflow": { "version": "3.0.2" },
     "pixivflow-webui": { "version": "1.1.0" }
   }
 }
