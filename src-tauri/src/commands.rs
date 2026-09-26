@@ -15,6 +15,7 @@ use crate::i18n;
 use crate::logger;
 use crate::login_window::{extract_auth_code, parse_url};
 use crate::ManagedState;
+use crate::{link, notify};
 
 /// How long the host waits for the user to finish Pixiv authorization before
 /// giving up and resolving `None` (the WebUI can start a new attempt).
@@ -43,6 +44,23 @@ const HOST_BRIDGE_SCRIPT: &str = r#"window.pixivflowHost = {
   },
   revealPath: function (path) {
     return window.__TAURI__.core.invoke('reveal_path', { path: path });
+  },
+  notify: function (notification) {
+    var copy = notification || {};
+    return window.__TAURI__.core
+      .invoke('notify', { title: copy.title, body: copy.body, level: copy.level })
+      .then(function (outcome) {
+        var result = outcome || {};
+        return result.shown === true
+          ? { shown: true }
+          : { shown: false, reason: result.reason === 'NOTIFY_DENIED' ? 'denied' : 'unavailable' };
+      });
+  },
+  openExternal: function (url) {
+    return window.__TAURI__.core.invoke('open_external', { url: url });
+  },
+  openUrl: function (url) {
+    return window.__TAURI__.core.invoke('open_in_app', { url: url });
   }
 };
 (function () {
@@ -350,6 +368,60 @@ pub fn open_logs(state: State<'_, ManagedState>) -> Result<(), String> {
 pub fn reveal_path(state: State<'_, ManagedState>, path: String) -> Result<(), String> {
     let data_root = discovery::data_root().map(|root| root.as_path());
     crate::reveal::reveal(data_root, Path::new(&state.config_path), &path)
+}
+
+/// Show a system notification on this machine — `pixivflowHost.notify`.
+///
+/// The WebUI owns the wording (it localises it before calling) and the decision
+/// to interrupt at all: it only asks when the page is in the background and the
+/// user would otherwise miss the outcome. This layer owns whether *this* machine
+/// can show a notification and starts the thing that does.
+///
+/// The answer is `{ shown, reason? }` rather than an error, because a refused
+/// notification is a normal outcome the WebUI must be able to report honestly:
+/// a toast nobody saw must not be logged as delivered.
+#[tauri::command]
+pub fn notify(title: String, body: String, level: Option<String>) -> notify::Outcome {
+    let _ = level; // presentation-only: no platform here changes behaviour by level
+    notify::notify(notify::current_platform(), &title, &body)
+}
+
+/// Hand a link to the user's own browser — the WebUI's `openExternal`.
+///
+/// Separate from [`open_in_app`] on purpose: this promise is "a real browser
+/// tab the user can see the address of", which is the right promise for an
+/// external docs/OAuth/"made with" link, and the wrong one for another
+/// PixivFlow page.
+#[tauri::command]
+pub fn open_external(url: String) -> Result<(), String> {
+    link::open_external(link::current_platform(), &url)
+}
+
+/// Navigate the WebUI window to another page of this same app — the WebUI's
+/// `openUrl`.
+///
+/// Confined to the origin the window already shows: a page served from the
+/// backend must not be able to turn the application shell into a browser
+/// pointed somewhere else. There is no in-app window before the WebUI exists,
+/// so that case is refused too rather than silently ignored.
+#[tauri::command]
+pub fn open_in_app(app: AppHandle, url: String) -> Result<(), String> {
+    if !link::is_openable(&url) {
+        return Err(link::LINK_INVALID.to_string());
+    }
+    let win = app
+        .get_webview_window("webui")
+        .ok_or_else(|| link::LINK_UNAVAILABLE.to_string())?;
+    let current = win.url().map_err(|e| format!("read WebUI url: {e}"))?;
+    if !link::is_same_origin(current.as_str(), &url) {
+        return Err(link::LINK_INVALID.to_string());
+    }
+    let target: tauri::Url = url
+        .parse()
+        .map_err(|e| format!("bad url {url}: {e}"))?;
+    win.navigate(target).map_err(|e| format!("navigate: {e}"))?;
+    let _ = win.set_focus();
+    Ok(())
 }
 
 /// Spawn the OS file opener for `path`. No waiting; failures surface as Err.

@@ -6,6 +6,8 @@ pub mod config;
 pub mod i18n;
 pub mod logger;
 pub mod login_window;
+mod link;
+mod notify;
 mod reveal;
 
 use std::path::PathBuf;
@@ -194,6 +196,9 @@ pub fn run() {
             commands::open_webui,
             commands::open_login_window,
             commands::reveal_path,
+            commands::notify,
+            commands::open_external,
+            commands::open_in_app,
             commands::export_diagnostics,
             commands::log_frontend,
             i18n::get_locale,

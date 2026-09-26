@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "webui",
-  "description": "Capability for the WebUI window served by the backend: remote content may reach ONLY the host login bridge, the path reveal used by the download UI, and error forwarding. No backend-lifecycle command is granted here — the remote page must not be able to stop, start or reconfigure the backend.",
+  "description": "Capability for the WebUI window served by the backend: remote content may reach ONLY the host login bridge, the device capabilities the WebUI presents as its own (show a path in the file manager, raise a system notification, hand a link to the browser, navigate this window to another page of this same app), and error forwarding. No backend-lifecycle command is granted here — the remote page must not be able to stop, start or reconfigure the backend.",
   "windows": ["webui"],
   "remote": {
     "urls": ["http://127.0.0.1:*", "http://localhost:*"]
@@ -10,6 +10,9 @@
     "core:default",
     "allow-open-login-window",
     "allow-log-frontend",
-    "allow-reveal-path"
+    "allow-reveal-path",
+    "allow-notify",
+    "allow-open-external",
+    "allow-open-in-app"
   ]
 }

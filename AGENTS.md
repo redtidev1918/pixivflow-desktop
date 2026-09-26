@@ -308,6 +308,34 @@ not re-derive, expand or interpret paths.
   folder (`open -R` on macOS, `explorer /select,` on Windows, `xdg-open` on the
   parent directory elsewhere), a directory is opened. Exposed to the remote
   WebUI as the bridge function `pixivflowHost.revealPath(path)`.
+- `notify(title, body, level?)` — raise a system notification. The **WebUI owns
+  the wording** (it localises before calling) and the decision to interrupt at
+  all (it asks only when the page is in the background); this layer owns whether
+  the machine can show one and starts the thing that does. macOS uses
+  `osascript -l JavaScript` with the copy passed as **argv** (JXA does not
+  escape argv, so quotes/backslashes/Unicode are safe), Linux uses
+  `notify-send`; Windows answers `NOTIFY_UNAVAILABLE` because WinRT toast needs
+  a registered AppUserModelID. The command returns `{ shown, reason? }` rather
+  than an error, because a refused toast is a normal outcome the WebUI must be
+  able to report honestly — a notification nobody saw must never be logged as
+  delivered. Bridge function `pixivflowHost.notify({ title, body, level })`,
+  which maps `NOTIFY_DENIED` → `reason: 'denied'` and everything else →
+  `'unavailable'`.
+- `open_external(url)` — hand a link to the user's own browser. Bridge function
+  `pixivflowHost.openExternal(url)`.
+- `open_in_app(url)` — navigate the WebUI window to another page of the *same*
+  app. Confined to the window's current origin (scheme, host and port must all
+  match), because a page served from the backend must not be able to turn the
+  shell into a browser pointed elsewhere. Bridge function
+  `pixivflowHost.openUrl(url)`.
+
+The two link commands are **separate promises and must not be merged**: "a real
+browser tab the user can see the address of" is right for an external
+docs/OAuth/"made with" link and wrong for another PixivFlow page. Both accept
+only `http`/`https` and pass the URL as argv — never through a shell — so a query
+string containing `&`, `"` or `$` cannot become a second command. The pure
+platform matrices live in `src-tauri/src/{reveal,notify,link}.rs` and are
+unit-tested on every target (`cfg!`, not `#[cfg]`).
 
 ### User-visible strings
 
