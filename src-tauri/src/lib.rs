@@ -6,6 +6,7 @@ pub mod config;
 pub mod i18n;
 pub mod logger;
 pub mod login_window;
+mod reveal;
 
 use std::path::PathBuf;
 use std::sync::mpsc;
