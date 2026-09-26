@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::backend::discovery;
+use crate::backend::proxy::{self, ProxyInjection};
 use crate::config::AppConfig;
 
 const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(6);
@@ -62,6 +63,8 @@ pub struct BackendManager {
     /// Last healthy probe result, kept in sync by the caller's poll loop.
     healthy: Mutex<Option<bool>>,
     last_error: Mutex<Option<String>>,
+    /// What the last spawn did about the system proxy (for the caller's log).
+    last_proxy: Mutex<ProxyInjection>,
 }
 
 impl BackendManager {
@@ -73,6 +76,7 @@ impl BackendManager {
             adopted_pid: Mutex::new(None),
             healthy: Mutex::new(None),
             last_error: Mutex::new(None),
+            last_proxy: Mutex::new(ProxyInjection::Unavailable),
         }
     }
 
@@ -161,6 +165,12 @@ impl BackendManager {
         self.last_error.lock().unwrap().clone()
     }
 
+    /// What the last `start()` did about the system proxy, so the caller can log
+    /// one credential-free line (host:port only).
+    pub fn last_proxy_injection(&self) -> ProxyInjection {
+        self.last_proxy.lock().unwrap().clone()
+    }
+
     pub fn set_healthy(&self, healthy: bool) {
         *self.healthy.lock().unwrap() = Some(healthy);
     }
@@ -186,6 +196,13 @@ impl BackendManager {
             return Err(err);
         }
         let (argv, extra_env, cwd) = self.resolve_command()?;
+        // A Finder/dock launch inherits no proxy env, so the backend would never
+        // reach Pixiv even though the login webview can. Forward the system
+        // proxy — never overriding a variable the user (or the LaunchSpec)
+        // already set. Planned before `extra_env` is consumed below.
+        let plan = proxy::plan_proxy(proxy::system_proxy(), |key| {
+            extra_env.contains_key(key) || std::env::var_os(key).is_some()
+        });
         let mut c = Command::new(&argv[0]);
         c.args(&argv[1..])
             .env("PORT", port.to_string())
@@ -196,6 +213,10 @@ impl BackendManager {
         for (k, v) in extra_env {
             c.env(k, v);
         }
+        for (k, v) in &plan.env {
+            c.env(k, v);
+        }
+        *self.last_proxy.lock().unwrap() = plan.outcome;
         let child = c.spawn().map_err(|e| {
             *self.last_error.lock().unwrap() = Some(format!("spawn backend 失败: {e}"));
             format!("spawn backend 失败: {e}")
