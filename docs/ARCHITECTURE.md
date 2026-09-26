@@ -119,6 +119,21 @@ Layer responsibilities:
 3. `pixivflow` found on `PATH`.
 4. fallback: bundled **mock** backend (dev/testing only).
 
+### Resource resolution in dev vs. installed bundle (F4.0)
+
+The paths above are *logical* resource paths. `discovery.rs` resolves each one
+against, in order:
+
+1. the installed bundle resource root — Tauri `app.path().resource_dir()`
+   (e.g. `PixivFlow Desktop.app/Contents/Resources/`), injected once via
+   `set_resource_root()` in the setup hook;
+2. the compile-time cargo manifest dir (`CARGO_MANIFEST_DIR/resources/…`) —
+   used by `cargo tauri dev` and by tests;
+3. a CWD-relative dev path (`src-tauri/resources/…`).
+
+So the same discovery code works unmodified in dev, tests and the installed
+`.app` / `.AppImage`; no absolute build-machine path leaks into a shipped app.
+
 `args[]` are appended to `command[]`; the manifest's optional `staticPath`
 (relative to the runtime dir, or absolute) overrides the desktop's bundled
 `resources/webui/dist` when it resolves to a directory.

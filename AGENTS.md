@@ -203,13 +203,17 @@ UI / frontend changes must verify:
 
 ## Current Roadmap
 
-Current stage: **F2.3 — Real PixivFlow runtime contract** — done. The manifest
-formalizes `{version, platform, command[], args[], health, staticPath,
-servesWebui}`; `scripts/fetch-pixivflow-runtime.mjs` lays the real backend into
+Current stage: **F4.0 — Packaging closure (macOS first)** — the app bundles and
+runs from an installed `.app`. The earlier F2.3 work formalized the manifest
+`{version, platform, command[], args[], health, staticPath, servesWebui}` and
+`scripts/fetch-pixivflow-runtime.mjs` lays the real backend into
 `src-tauri/resources/runtime/pixivflow/` (git-ignored build product); doctor
-reports runtime validation + WebUI status. The committed default stays the dev
-stand-in (`dev-backend.mjs`), so a fresh clone runs light until the fetch runs.
-Checksums / download / auto-update are design-only. Next: Phase 3 UX / Phase 4 distribution.
+reports runtime validation + WebUI status. Discovery resolves resources at
+runtime: installed bundle root (`app.path().resource_dir()`) → compile-time
+manifest dir → CWD-relative dev path, so the same code works in dev and in the
+`.app` / `.AppImage`. The committed default stays the dev stand-in
+(`dev-backend.mjs`). Checksums / download / auto-update are design-only.
+Remaining F4: real-runtime resource globs, DMG, GitHub Actions, Windows/Linux.
 
 Not currently implemented (do not add without an explicit decision):
 

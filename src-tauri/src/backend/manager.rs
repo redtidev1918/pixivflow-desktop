@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::backend::discovery;
 use crate::config::AppConfig;
 
 const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(6);
@@ -223,15 +224,8 @@ impl BackendManager {
             return Ok((argv, BTreeMap::new()));
         }
         // Dev/test default: the bundled mock backend (health-probe stub).
-        let candidates = [
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("resources/mock-backend.mjs"),
-            std::path::PathBuf::from("src-tauri/resources/mock-backend.mjs"),
-        ];
-        for c in &candidates {
-            if c.exists() {
-                return Ok((vec!["node".into(), c.display().to_string()], BTreeMap::new()));
-            }
+        if let Some(c) = discovery::mock_script() {
+            return Ok((vec!["node".into(), c.display().to_string()], BTreeMap::new()));
         }
         Err("未配置 backend.command 且未找到默认 mock backend（F1 仅演示用）".into())
     }

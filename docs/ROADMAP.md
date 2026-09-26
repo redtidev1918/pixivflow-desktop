@@ -10,7 +10,7 @@ rewrite of upstream PixivFlow / webui.
 | **Phase 1 — Shell MVP** ✅ | First runnable app | Tauri 2 window · frontend status shell · `BackendManager` (start/stop/restart/health) · config system · single-instance · file logging |
 | **Phase 2 — Real backend integration** 🚧 | Lifecycle | 2.1 adapter+discovery+doctor ✅ · 2.2 bundled runtime+manifest+方案 A WebUI (`STATIC_PATH`)+open WebUI ✅ · 2.3 `scripts/fetch-pixivflow-runtime.mjs` acquires the real PixivFlow runtime into the bundle ✅ (committed default stays the dev stand-in) |
 | **Phase 3 — UX** ⬜ | Experience | settings page · log viewer · remote mode · tray icon |
-| **Phase 4 — Distribution** ⬜ | Packaging | GitHub Actions · Windows .exe · macOS .dmg · Linux AppImage |
+| **Phase 4 — Distribution** 🚧 | Packaging | 4.0 runtime resource resolution + icon set + `.app` bundle, smoke-verified on macOS ✅ · DMG · GitHub Actions · Windows .exe · Linux AppImage |
 | **Phase 5 — Releasegraph** ⬜ | Fleet automation | `desktop-manifest.json` version lock · automated update PR · auto Desktop release |
 
 ## Phase 0 — Foundation ✅
@@ -161,12 +161,27 @@ an open follow-up — F2.2 step 方案 A keeps the placeholder `webui/dist`.)
 - Log viewer.
 - Tray icon + minimize-to-tray.
 
-## Phase 4 — Distribution ⬜
+## Phase 4 — Distribution 🚧
+
+### 4.0 Packaging closure — macOS first ✅
+
+- **Runtime resource resolution** — discovery resolves bundled runtime / WebUI
+  / mock paths against the Tauri `resource_dir()` first, then the cargo
+  manifest / CWD paths; the same code works in dev and installed.
+- **Bundle config** — `bundle.active=true`, explicit `resources` map with the
+  in-bundle layout (`runtime/pixivflow/…`, `webui/dist/…`, mock script) and a
+  full icon set (`tauri icon`).
+- **Verified** — `tauri build --bundles app` produces
+  `PixivFlow Desktop.app`; launched from the bundle the backend auto-starts,
+  `/api/health` → 200, `GET /` serves the bundled WebUI, and closing stops it.
+
+### Remaining
 
 - Windows installer (.exe).
 - macOS .dmg.
 - Linux AppImage.
 - GitHub Actions release workflow.
+- Real-runtime resource globs (the fetched `dist` / `node_modules`).
 
 ## Phase 5 — Releasegraph ⬜
 

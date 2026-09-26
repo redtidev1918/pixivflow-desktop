@@ -13,11 +13,31 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
+
+/// Runtime `resources/` root inside an installed bundle.
+///
+/// In dev/tests the resources live under the cargo manifest dir (`CARGO_MANIFEST_DIR`),
+/// but in a packaged `.app` / `.AppImage` they are copied next to the binary and
+/// located at runtime via Tauri's `resource_dir()`. Set once during startup before
+/// discovery runs; when unset, the compile-time manifest / CWD paths are used.
+static RESOURCE_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Install the runtime bundle resource root (Tauri `resource_dir()`). No-op after
+/// the first successful set; called once from the Tauri setup hook.
+pub fn set_resource_root(dir: PathBuf) {
+    let _ = RESOURCE_ROOT.set(dir);
+}
+
+/// The currently installed runtime resource root, if any.
+pub fn resource_root() -> Option<&'static PathBuf> {
+    RESOURCE_ROOT.get()
+}
 
 /// Where an executable was found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -263,17 +283,20 @@ fn bundled_runtime() -> Option<BundledRuntime> {
     None
 }
 
-/// `resources/runtime/pixivflow/` absolute path (from cargo manifest or CWD).
+/// `resources/runtime/pixivflow/` absolute path.
+///
+/// Resolution: the installed bundle resource root (Tauri `resource_dir()`),
+/// then the compile-time cargo manifest dir, then a CWD-relative dev path.
 fn bundled_dir() -> Option<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/runtime/pixivflow");
-    if dir.is_dir() {
-        return Some(dir);
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(root) = RESOURCE_ROOT.get() {
+        candidates.push(root.join("runtime/pixivflow"));
     }
-    let alt = PathBuf::from("src-tauri/resources/runtime/pixivflow");
-    if alt.is_dir() {
-        return Some(alt);
-    }
-    None
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/runtime/pixivflow"),
+    );
+    candidates.push(PathBuf::from("src-tauri/resources/runtime/pixivflow"));
+    candidates.into_iter().find(|d| d.is_dir())
 }
 
 /// Resolve relative argv entries against `dir`. Returns (argv, entry-file).
@@ -318,16 +341,22 @@ fn resolve_static_path(dir: &Path, manifest: &RuntimeManifest) -> Option<String>
 }
 
 /// Absolute path of the bundled WebUI dist, if present (方案 A STATIC_PATH).
+///
+/// Resolution mirrors [`bundled_dir`]: bundle resource root first, then the
+/// compile-time cargo manifest dir, then a CWD-relative dev path.
 pub fn static_webui_path() -> Option<String> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/webui/dist");
-    if dir.is_dir() {
-        return Some(dir.display().to_string());
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(root) = RESOURCE_ROOT.get() {
+        candidates.push(root.join("webui/dist"));
     }
-    let alt = PathBuf::from("src-tauri/resources/webui/dist");
-    if alt.is_dir() {
-        return Some(alt.display().to_string());
-    }
-    None
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/webui/dist"),
+    );
+    candidates.push(PathBuf::from("src-tauri/resources/webui/dist"));
+    candidates
+        .into_iter()
+        .find(|d| d.is_dir())
+        .map(|d| d.display().to_string())
 }
 
 /// Search PATH for a command name (case-insensitive on Windows).
@@ -350,11 +379,15 @@ fn find_in_path(name: &str) -> Option<String> {
 }
 
 /// Locate the dev mock backend script.
-fn mock_script() -> Option<PathBuf> {
-    let candidates = [
+pub(crate) fn mock_script() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(root) = RESOURCE_ROOT.get() {
+        candidates.push(root.join("mock-backend.mjs"));
+    }
+    candidates.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/mock-backend.mjs"),
-        PathBuf::from("src-tauri/resources/mock-backend.mjs"),
-    ];
+    );
+    candidates.push(PathBuf::from("src-tauri/resources/mock-backend.mjs"));
     candidates.into_iter().find(|p| p.is_file())
 }
 

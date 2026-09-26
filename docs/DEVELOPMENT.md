@@ -32,8 +32,15 @@ npm test             # frontend unit tests (node --test src/frontend/*.test.mjs)
 npm run tauri dev    # dev run: Vite dev server + debug Tauri window
 cd src-tauri && cargo build   # build the Rust core only
 cd src-tauri && cargo test    # headless backend lifecycle integration tests
-cargo tauri build    # production bundle (Phase 4 currently inactive: bundle.active=false)
+cargo tauri build                 # production build + installer bundles (DMG/…/AppImage)
+cargo tauri build --no-bundle     # release binary only
+cargo tauri build --bundles app   # macOS .app only (fastest packaging check)
 ```
+
+> Under the DSH harness the Tauri CLI can mistake the Electron helper path for
+> an argument; if so invoke it directly:
+> `node -e "require('./node_modules/@tauri-apps/cli/main.js').run(['icon','src-tauri/icons/icon.png'],'cargo-tauri')"`
+> (cargo must be on `PATH`, e.g. `PATH="$HOME/.cargo/bin:$PATH"`).
 
 ## How the app runs
 

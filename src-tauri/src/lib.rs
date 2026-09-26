@@ -108,6 +108,12 @@ pub fn run() {
             commands::open_webui,
         ])
         .setup(|app| {
+            // 0. point discovery at the installed bundle resources (no-op in dev,
+            //    where it falls back to the cargo manifest dir).
+            if let Ok(res_dir) = app.path().resource_dir() {
+                backend::discovery::set_resource_root(res_dir.clone());
+            }
+
             // 1. config
             let cfg_result = config::load_or_create(app.handle());
             let (cfg, config_error) = match cfg_result {
