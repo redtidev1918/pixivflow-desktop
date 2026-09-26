@@ -1,7 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the launcher window: it owns the backend lifecycle and the native controls. The WebUI window has its own capability (webui.json) and the transient `login` window loads an external Pixiv page and needs none.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-get-status",
+    "allow-get-config",
+    "allow-config-path",
+    "allow-start-backend",
+    "allow-stop-backend",
+    "allow-restart-backend",
+    "allow-backend-doctor",
+    "allow-open-logs",
+    "allow-open-webui"
+  ]
 }

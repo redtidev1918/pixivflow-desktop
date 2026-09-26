@@ -3,6 +3,7 @@
 pub mod backend;
 mod commands;
 pub mod config;
+pub mod login_window;
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -106,6 +107,7 @@ pub fn run() {
             commands::backend_doctor,
             commands::open_logs,
             commands::open_webui,
+            commands::open_login_window,
         ])
         .setup(|app| {
             // 0. point discovery at the installed bundle resources (no-op in dev,
@@ -174,6 +176,12 @@ pub fn run() {
                                 let adopted = state.manager.lock().unwrap().is_adopted();
                                 let what = if adopted { "adopted" } else { "started" };
                                 state.log.info(&format!("auto-start: backend {what} pid={pid}"));
+                                if !adopted {
+                                    state.log.info(&format!(
+                                        "backend proxy: {}",
+                                        state.manager.lock().unwrap().last_proxy_injection().describe()
+                                    ));
+                                }
                             }
                             Err(e) => {
                                 state.log.error(&format!("auto-start failed: {e}"))
@@ -213,7 +221,9 @@ pub fn run() {
                 // open behind it; the backend keeps running. Closing the launcher
                 // is the app's exit: tear the WebUI window down with it and stop
                 // the backend so no orphan holds the port.
-                if window.label() == "webui" {
+                // The transient `login` window (host login bridge) is not a
+                // launcher either: closing it must never stop the backend.
+                if window.label() == "webui" || window.label() == "login" {
                     return;
                 }
                 let h = window.app_handle().clone();
