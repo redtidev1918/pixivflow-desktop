@@ -30,7 +30,7 @@ PixivFlow Desktop 是 [PixivFlow](https://github.com/redtidev1918/PixivFlow) 的
 sha256sum -c SHA256SUMS
 ```
 
-安装包**未做代码签名**，所以系统会拦一次——这是已知限制，不是安装包损坏。目前 macOS 只产出 Apple Silicon 版 `.dmg`（原因见 [发布](#发布)）。
+安装包**未做代码签名**，所以系统会拦一次——这是已知限制，不是安装包损坏。目前 macOS 只产出 Apple Silicon 版 `.dmg`（原因见 [发布与版本管理](docs/RELEASE.md)）。
 
 ## 功能
 
@@ -118,33 +118,15 @@ PixivFlow  ──►  pixivflow-webui  ──►  pixivflow-desktop
 
 改代码前请先读 [AGENTS.md](AGENTS.md)：它写明了本仓库的边界（不做业务逻辑、不引入第二个前端、不做自动更新）以及提交与发布约定。
 
-## 发布
+## 已知限制
 
-本仓库是 releasegraph 的一个节点，**发版全自动**：`main` 上的 Conventional Commit 会让 release-please 开一个 `chore(main): release x.y.z` 的 PR，**合并这个 PR 就是发布**——舰队引擎负责打 tag、跑三平台构建、校验资产名、生成 Release 与中文更新说明。没有人手动改版本号或建 tag；开一个 Pull Request 就等同于一次完整 dry run。
+- 安装包**未签名**，首次打开需要手动放行（见 [下载](#下载)）。
+- macOS 目前只有 **Apple Silicon（arm64）** 的 `.dmg`：`macos-latest` runner 本身是 Apple Silicon，而随包携带的 `node` 用的是 runner 自己的那份；要出 Intel 版需要先把运行时改成按平台分发的发布产物（[路线图](docs/ROADMAP.md) F4.2 / F4.3）。
+- 尚无自动更新（[路线图](docs/ROADMAP.md) F5）。
 
-每次发布产出固定命名的安装包：
+## 版本与发布
 
-```
-PixivFlow-Desktop-v<版本>-macos-arm64.dmg
-PixivFlow-Desktop-v<版本>-windows-x64-setup.exe
-PixivFlow-Desktop-v<版本>-linux-amd64.deb        （AppImage 视 runner 能力可选）
-```
-
-发布完成后，本仓库的 [文档站](https://redtidev1918.github.io/pixivflow-desktop/) 会自动刷新下载页并重新部署。
-
-**已知限制（写清楚，不粉饰）**：
-
-- 安装包**未签名**，首次打开需要手动放行。
-- macOS 目前只有 **arm64** 的 `.dmg`：`macos-latest` runner 是 Apple Silicon，而随包携带的 `node` 用的是 runner 自己的那份；要出 Intel 包需要先把运行时改成按平台分发的发布产物（路线图 F4.2 / F4.3）。
-- 尚无自动更新（路线图 F5）。
-
-细节与故障排查见 [发布与版本管理](docs/RELEASE.md)。
-
-## 项目状态
-
-已经走完：**F0** 仓库骨架 → **F1 / F1.1** 可运行的桌面外壳与启动体验 → **F2.1** 真实后端适配 / 发现 / doctor → **F2.2** 打包运行时 + 方案 A 的 WebUI（后端用 `STATIC_PATH` 提供前端）→ **F2.3** 正式运行时契约与获取脚本 → **F4.0 / F4.1** macOS `.app` 打包闭环、真实运行时与真实 WebUI 一起进 bundle → **F4.4** CI 三平台发布矩阵（macOS / Windows / Linux 全部构建成功，`v0.2.0` 起为自动发布）。
-
-还在前面：**F4.2 / F4.3** 按平台发布运行时产物并让桌面端自行下载/切换运行时（Intel `.dmg` 也依赖它）→ **F4.5** 命令行与命名收口 → **F4.6** `doctor` 自检命令 → **F5** 自动更新与一键部署。完整阶段计划见 [路线图](docs/ROADMAP.md)。
+版本号规则、发版流程与安装包命名约定见 [发布与版本管理](docs/RELEASE.md)；当前阶段与后续计划见 [路线图](docs/ROADMAP.md)。
 
 ## 文档
 

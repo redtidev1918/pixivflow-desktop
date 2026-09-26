@@ -30,7 +30,7 @@ Every release also ships `SHA256SUMS` and `RELEASE-METADATA.json`:
 sha256sum -c SHA256SUMS
 ```
 
-The installers are **not code-signed**, so the OS will block them once — a known limitation, not a broken download. macOS currently produces an Apple Silicon `.dmg` only (why: see [Releases](#releases)).
+The installers are **not code-signed**, so the OS will block them once — a known limitation, not a broken download. macOS currently produces an Apple Silicon `.dmg` only (why: see [release & version management](docs/RELEASE.md)).
 
 ## Features
 
@@ -118,33 +118,15 @@ PixivFlow  ──►  pixivflow-webui  ──►  pixivflow-desktop
 
 Read [AGENTS.md](AGENTS.md) before changing code: it states this repo's boundaries (no business logic, no second frontend, no auto-update) plus the commit and release conventions.
 
-## Releases
+## Known limits
 
-This repository is a releasegraph node, so **releasing is automatic**: a Conventional Commit on `main` makes release-please open a `chore(main): release x.y.z` pull request, and **merging that pull request is the release** — the fleet engine tags it, builds all three platforms, validates the asset names and publishes the Release with Chinese notes. Nobody hand-edits a version or creates a tag; opening a pull request is a full dry run.
+- The installers are **unsigned**; first launch needs a manual allow (see [Download](#download)).
+- macOS currently ships **Apple Silicon (arm64)** only: `macos-latest` is itself Apple Silicon and the bundled `node` is the runner's own. An Intel build needs the runtime distributed as per-platform release artifacts first ([roadmap](docs/ROADMAP.md) F4.2 / F4.3).
+- There is no auto-update yet ([roadmap](docs/ROADMAP.md) F5).
 
-Each release produces canonically named installers:
+## Versioning & releases
 
-```
-PixivFlow-Desktop-v<version>-macos-arm64.dmg
-PixivFlow-Desktop-v<version>-windows-x64-setup.exe
-PixivFlow-Desktop-v<version>-linux-amd64.deb        (AppImage when the runner supports it)
-```
-
-After a release the [documentation site](https://redtidev1918.github.io/pixivflow-desktop/) refreshes its download page and redeploys automatically.
-
-**Known limits, stated plainly:**
-
-- The installers are **unsigned**; first launch needs a manual allow.
-- macOS currently ships **arm64** only: `macos-latest` is Apple Silicon and the bundled `node` is the runner's own. An Intel `.dmg` needs the runtime distributed as per-platform release artifacts first (roadmap F4.2 / F4.3).
-- There is no auto-update yet (roadmap F5).
-
-Details and troubleshooting: [release & version management](docs/RELEASE.md).
-
-## Project status
-
-Done so far: **F0** repository skeleton → **F1 / F1.1** runnable shell and boot experience → **F2.1** real backend adapter / discovery / doctor → **F2.2** bundled runtime + WebUI via `STATIC_PATH` → **F2.3** formal runtime contract and fetch script → **F4.0 / F4.1** macOS `.app` packaging closure with the real runtime and real WebUI in the bundle → **F4.4** the CI release matrix (macOS / Windows / Linux all build green; automatically released since `v0.2.0`).
-
-Still ahead: **F4.2 / F4.3** per-platform runtime artifacts the desktop can download and switch (an Intel `.dmg` depends on it) → **F4.5** CLI and naming closure → **F4.6** a `doctor` self-check command → **F5** auto-update and one-click deployment. Full plan: [roadmap](docs/ROADMAP.md).
+Versioning rules, the release flow and the installer naming contract live in [release & version management](docs/RELEASE.md); the current phase and what comes next are in the [roadmap](docs/ROADMAP.md).
 
 ## Documentation
 
