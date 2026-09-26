@@ -20,6 +20,7 @@ fn main() {
                 "open_logs",
                 "open_webui",
                 "open_login_window",
+                "reveal_directory",
                 "export_diagnostics",
                 "log_frontend",
                 "get_locale",

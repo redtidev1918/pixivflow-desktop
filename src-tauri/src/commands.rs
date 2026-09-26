@@ -40,6 +40,9 @@ const HOST_BRIDGE_SCRIPT: &str = r#"window.pixivflowHost = {
     return window.__TAURI__.core
       .invoke('open_login_window', { authUrl: authUrl, redirectUri: redirectUri })
       .then(function (code) { return { code: code === undefined ? null : code }; });
+  },
+  openDirectory: function (path) {
+    return window.__TAURI__.core.invoke('reveal_directory', { path: path });
   }
 };
 (function () {
@@ -325,6 +328,25 @@ pub fn doctor_report(state: &ManagedState) -> DoctorReport {
 #[tauri::command]
 pub fn open_logs(state: State<'_, ManagedState>) -> Result<(), String> {
     let path = state.log.path().to_string();
+    open_in_default_viewer(&path)
+}
+
+/// Reveal one directory in the machine's file manager.
+///
+/// The WebUI asks for this through the host bridge: the backend can only open a
+/// file manager on *its* host, which is a different machine whenever PixivFlow
+/// runs on a server, so the desktop opens the folder itself. The path is
+/// validated here (`exists` + `is_dir`) — the backend has already confined it to
+/// a configured download directory before the bridge is reached.
+#[tauri::command]
+pub fn reveal_directory(path: String) -> Result<(), String> {
+    let dir = std::path::Path::new(&path);
+    if !dir.exists() {
+        return Err(format!("directory does not exist: {path}"));
+    }
+    if !dir.is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
     open_in_default_viewer(&path)
 }
 
