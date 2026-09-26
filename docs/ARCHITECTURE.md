@@ -1,43 +1,102 @@
 # Architecture
 
-PixivFlow Desktop is a **shell** around the existing PixivFlow ecosystem. It
-introduces no business logic of its own; it layers a desktop experience on top of
-the stable upstream components.
+PixivFlow Desktop is the **official desktop runtime environment and release
+layer** for the PixivFlow ecosystem. It introduces no business logic of its
+own; it layers a native desktop experience (runtime management, lifecycle,
+discovery, packaging, simplified install & launch) on top of the stable
+upstream components.
 
-## Layer responsibilities
+```
+PixivFlow Desktop
+      |
+      v
+PixivFlow Backend
+      |
+      v
+PixivFlow WebUI
+```
 
-### Desktop Layer (this repo / Tauri)
+## Why Tauri 2?
 
-- **Window management** — the Tauri window hosting the WebUI.
-- **Backend lifecycle** — start / stop / restart / health-check of the bundled
-  or remote PixivFlow backend process.
-- **Configuration** — read/write the desktop config (`local` / `remote` mode).
-- **Update channel** — the Tauri updater reading GitHub Releases.
+- **Small package** — native webview, ~10–20 MB installers instead of 100 MB+.
+- **Low memory** — OS native web engine, no bundled Chromium.
+- **Cross-platform** — Windows / macOS / Linux from one codebase.
+- **Rust process management** — small, auditable binary for backend lifecycle
+  (spawn / stop / restart / health check) and native integration.
+- **GitHub Releases updater** — first-class signed updates straight from GitHub
+  Releases, no self-hosted updater server to operate.
 
 The Desktop Layer is deliberately thin. It does **not** contain business logic:
 no scheduling, no downloads, no delivery, no media handling, no Pixiv auth.
 
-### Backend Layer (upstream PixivFlow)
+## System architecture
 
-- **PixivFlow business logic** — the execution plane.
-- **API** — the WebUI-facing HTTP + Socket.IO contract.
-- **Scheduler** — the slot ledger / scheduling engine.
-- **Download** — the media parsing and download pipeline.
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Desktop Layer  (this repo · Tauri 2 + Rust + Vite shell)     │
+│  ─ Tauri window / app lifecycle                                │
+│  ─ BackendManager: spawn · stop · restart · health            │
+│  ─ discovery.rs: bundled → config → PATH → mock               │
+│  ─ config (desktop-config.json) · logging · native integration│
+│  ─ control shell (src/frontend) — status + 打开 PixivFlow     │
+└───────────────┬──────────────────────────────────────────────┘
+                │ spawn / supervise / open_webui
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Backend Runtime  (upstream PixivFlow)                       │
+│  ─ PixivFlow business logic (schedule · download · delivery) │
+│  ─ HTTP + Socket.IO API                                      │
+│  ─ serves WebUI static dist over STATIC_PATH (方案 A)        │
+└───────────────┬──────────────────────────────────────────────┘
+                │ same-origin http://127.0.0.1:{port}/
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Web UI  (upstream pixivflow-webui)                          │
+│  ─ the user interface (everything the user sees & clicks)    │
+└──────────────────────────────────────────────────────────────┘
+```
 
-### Web Layer (upstream pixivflow-webui)
+Layer responsibilities:
 
-- **UI** — the user interface.
-- **User interaction** — everything the user sees and clicks.
+- **Desktop Layer (this repo / Tauri)** — window & app lifecycle, backend
+  process management, runtime discovery, configuration, logging, native
+  integration. It renders the upstream UI in a webview window and never
+  re-implements the interface.
+- **Backend Layer (upstream PixivFlow)** — the execution plane: PixivFlow
+  business logic, the WebUI-facing HTTP + Socket.IO API, the scheduler, and the
+  download pipeline.
+- **Web Layer (upstream pixivflow-webui)** — the UI and all user interaction.
 
-The desktop renders this UI in its Tauri window via the backend's same-origin
-serving; it never re-implements the interface.
+## Runtime lifecycle
 
-## Boundary (non-negotiable)
+1. **Resolve** — `discovery.rs` chooses the backend command:
+   bundled `runtime-manifest.json` → `backend.command` → `PATH` → dev mock.
+2. **Spawn** — `BackendManager.start()` injects the resolved
+   `LaunchSpec{command, env}` (with `STATIC_PATH`) and launches the process
+   (idempotent; refuses if the port is already taken).
+3. **Health** — periodic `GET /api/health` probe (raw TCP) drives the UI
+   `running / healthy` state; `backend_doctor` surfaces source / version / port.
+4. **Serve WebUI** — the backend hosts the static WebUI over `STATIC_PATH`;
+   the desktop opens `http://127.0.0.1:{port}/` (方案 A).
+5. **Stop** — graceful **SIGTERM** with a bounded wait; never `kill -9`.
+   Closing the desktop window triggers the stop.
 
-- Desktop ⇢ launches / supervises / updates the backend. Never replaces it.
-- Desktop ⇢ renders the WebUI. Never re-implements it.
-- Desktop ⇢ reads historical analysis/docs. Never imports upstream source.
-- Business logic belongs to upstream PixivFlow — **Desktop 不包含业务逻辑**.
+## Backend communication
+
+- The desktop talks to the backend **only** as an external client over its HTTP
+  API (health + WebUI). It never links, imports, or patches backend code.
+- The backend is configured via **environment / CLI overrides** (`PORT`,
+  `HOST`, `STATIC_PATH`) — not by modifying upstream source.
+- The WebUI is **same-origin** with the backend, so the desktop window needs no
+  cross-origin proxy for the product page.
+
+## Desktop ⇄ PixivFlow boundary (non-negotiable)
+
+- Desktop ⇢ launches / supervises / updates the backend. **Never replaces it.**
+- Desktop ⇢ renders the WebUI. **Never re-implements it.**
+- Desktop ⇢ reads historical analysis/docs. **Never imports upstream source.**
+- **PixivFlow is the only source of business behavior**; the Desktop never
+  copies backend logic.
 
 ## Component version lock
 

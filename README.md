@@ -4,7 +4,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)]()
 [![Made with Tauri 2](https://img.shields.io/badge/Made%20with-Tauri%202-purple)]()
 
-> PixivFlow Desktop is a cross-platform desktop shell for **PixivFlow**.
+> PixivFlow Desktop is the **native desktop distribution** for **PixivFlow** —
+> the official desktop runtime environment and release layer.
 
 It is **not**:
 
@@ -14,20 +15,26 @@ It is **not**:
 
 It is:
 
-- a **Tauri wrapper** around the existing PixivFlow backend,
-- a **lifecycle manager** for the local backend process,
-- and the **WebUI integration** that opens pixivflow-webui once the backend is healthy.
+- a **one-click native launcher** that installs, starts and packages the PixivFlow
+  runtime for ordinary users,
+- a **lifecycle manager** for the local PixivFlow backend process,
+- and the **WebUI distribution** that opens pixivflow-webui once the backend is healthy.
 
 Business logic stays in upstream PixivFlow. The desktop only launches, supervises,
-contains and updates it.
+bundles and updates it.
 
 ## Features
 
-- **Native desktop experience** — a fast, self-contained Tauri 2 shell that boots
+- **Open-and-run (one-click launch)** — double-click the app: it reads its config,
+  auto-starts the bundled PixivFlow backend, health-checks it and opens the WebUI.
+- **Native desktop experience** — a fast, self-contained Tauri 2 app that boots
   straight into a PixivFlow Desktop bootstrap UI (never a blank window).
 - **Local backend lifecycle management** — the Rust `BackendManager` starts,
   stops (graceful SIGTERM) and restarts the local backend process, and manages
   its runtime discovery (bundled → config → PATH → dev mock fallback).
+- **Bundled runtime** — ships a packaged PixivFlow backend
+  (`resources/runtime/pixivflow/`, described by `runtime-manifest.json`) and the
+  WebUI dist, so an ordinary user needs no separate install.
 - **Runtime status monitoring** — live port / PID / health readout fed by the
   `/api/health` probe and pushed to the UI via the `backend-status` event.
 - **Configuration** — reads `desktop-config.json` (auto-created with defaults)
@@ -38,12 +45,12 @@ contains and updates it.
 
 ## Status (F2.2 — Bundled runtime + WebUI integration)
 
-Runnable Tauri 2 shell that discovers and supervises a **bundled** backend
+Runnable Tauri 2 desktop app that discovers and supervises a **bundled** backend
 (`resources/runtime/pixivflow/`, described by `runtime-manifest.json`) and opens
 the **bundled WebUI** (`resources/webui/dist`) served by that backend — 方案 A.
 Discovery precedence keeps a shipped install stable: bundled → config → PATH →
 dev mock fallback. Core `BackendManager` stays a pure lifecycle owner. The
-control shell shows backend status / port / PID / health / source / version and
+control UI shows backend status / port / PID / health / source / version and
 offers **打开 PixivFlow** (open WebUI), Restart, Stop, Open Logs. A versioned
 `dev-backend.mjs` stand-in proves the full bundled contract until the real
 release binary is wired (F2.3). See [docs/ROADMAP.md](/docs/ROADMAP.md) for the
@@ -53,16 +60,18 @@ full phase plan and [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
 
 ```
 PixivFlow Desktop
-        |
-        |
-     Tauri 2
-        |
- ----------------
- |              |
-WebUI        Backend
- |              |
-pixivflow-webui PixivFlow
+      |
+      v
+PixivFlow Backend
+      |
+      v
+PixivFlow WebUI
 ```
+
+Three layers, one responsibility each: the **Desktop** (this repo, Tauri 2 +
+Rust) manages the runtime; the **Backend** (upstream PixivFlow) owns all
+business logic; the **WebUI** (upstream pixivflow-webui) is the interface the
+desktop opens. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Why Tauri 2?
 
