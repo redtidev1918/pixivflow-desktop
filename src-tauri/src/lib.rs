@@ -103,6 +103,7 @@ pub fn run() {
             commands::start_backend,
             commands::stop_backend,
             commands::restart_backend,
+            commands::backend_doctor,
         ])
         .setup(|app| {
             // 1. config
@@ -151,6 +152,7 @@ pub fn run() {
                 std::thread::spawn(move || {
                     {
                         let state = app_handle.state::<ManagedState>();
+                        commands::apply_discovery(&state);
                         let start_res = state.manager.lock().unwrap().start();
                         match start_res {
                             Ok(pid) => {

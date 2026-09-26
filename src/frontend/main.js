@@ -14,6 +14,8 @@ const metaMode = document.getElementById("meta-mode");
 const metaConfig = document.getElementById("meta-config");
 const logEl = document.getElementById("log");
 const modeEl = document.getElementById("mode");
+const metaSrc = document.getElementById("meta-src");
+const metaVer = document.getElementById("meta-ver");
 
 const STATE_STYLES = {
   running: { dot: "dot-running", text: "Backend running", ok: true },
@@ -96,5 +98,23 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   await refresh();
+  renderDoctor();
   appendLog("前端壳已加载");
 });
+
+// F2.1 — compact backend-doctor readout (resolved source + version, no new UI).
+async function renderDoctor() {
+  try {
+    const d = await invoke("backend_doctor");
+    const src = d.source ?? "?";
+    if (metaSrc) metaSrc.textContent = src;
+    if (metaVer) metaVer.textContent = d.version ?? (d.backend_found ? "—" : "none");
+    const kind = d.running
+      ? (d.healthy ? "healthy" : "unhealthy")
+      : "stopped";
+    appendLog(`doctor: ${src} backend v${d.version ?? "?"} · ${kind} · ${d.message}`);
+  } catch (e) {
+    if (metaSrc) metaSrc.textContent = "?";
+    appendLog("doctor 失败: " + e);
+  }
+}

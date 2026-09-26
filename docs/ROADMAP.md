@@ -8,7 +8,7 @@ rewrite of upstream PixivFlow / webui.
 |---|---|---|
 | **Phase 0 — Foundation** ✅ | Repository skeleton | structure · docs · `desktop-manifest.json` / `desktop-config.json` contracts |
 | **Phase 1 — Shell MVP** ✅ *(current)* | First runnable app | Tauri 2 window · frontend status shell · `BackendManager` (start/stop/restart/health) · config system · single-instance · file logging |
-| **Phase 2 — Real backend integration** ⬜ | Lifecycle | download backend release · bundle webui dist · `STATIC_PATH` · run the real PixivFlow locally |
+| **Phase 2 — Real backend integration** 🚧 | Lifecycle | 2.1 adapter+discovery+doctor ✅ · 2.2 download/bundle real backend & webui · `STATIC_PATH` · run locally |
 | **Phase 3 — UX** ⬜ | Experience | settings page · log viewer · remote mode · tray icon |
 | **Phase 4 — Distribution** ⬜ | Packaging | GitHub Actions · Windows .exe · macOS .dmg · Linux AppImage |
 | **Phase 5 — Releasegraph** ⬜ | Fleet automation | `desktop-manifest.json` version lock · automated update PR · auto Desktop release |
@@ -51,6 +51,33 @@ Delivered and verified in this repo (Tauri 2.x):
 - [x] Backend auto-start simulated (mock) on configurable port → `starting` → `running`.
 - [x] Health detected (`/api/health` → 200).
 - [x] Closing the window stops the backend gracefully.
+
+## Phase 2.1 — Real backend adapter ✅
+
+Keeps `BackendManager` as a pure lifecycle owner (**spawn / stop / restart /
+health**) and adds a **discovery/adapter** layer so it can drive a REAL
+PixivFlow backend — resolved, not assumed.
+
+- **`backend/discovery.rs`** — resolves which backend to run, in priority order:
+  1. bundled `resources/runtime/pixivflow`
+  2. user-configured `backend.command` (+ `backend.args`)
+  3. `pixivflow` on `PATH`
+  4. fallback: the bundled mock backend (dev/test)
+- **Config shape** — `backend.command` is now a plain string and `backend.args`
+  an array (matches the desktop-config contract):
+  `{ "backend": { "mode": "local", "command": "", "args": [], "port": 3000, "autoStart": true } }`.
+- **BackendManager** — unchanged lifecycle; only gains a tiny adapter wiring
+  point `set_command_override()` so the resolved command can be injected.
+- **`backend` doctor command** — reports `backend_found`, `executable_path`,
+  `source` (`bundled|config|path|mock`), `version` (from `--version` probe),
+  `port`, `running`, `healthy`, `message`. Frontend shows source + version.
+- **Version probe** — `discover_with_version()` runs `argv --version` (bounded).
+- **Tests** (`backend_test.rs`, 6): adapter parses configured command ·
+  fallback resolves · `--version` probe · fake-backend start→health→stop via
+  the adapter · doctor components resolve · F1 round-trip still green.
+
+Live-verified: with `backend.command` set, the app logs `backend resolved:
+source=config … real=true`, spawns it, and `/api/health` → 200.
 
 ## Phase 2 — Real backend integration ⬜
 

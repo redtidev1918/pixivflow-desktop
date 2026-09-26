@@ -1,3 +1,10 @@
+const MOCK_VERSION = '0.0.0-mock';
+
+if (process.argv.includes('--version')) {
+  console.log(`pixivflow ${MOCK_VERSION}`);
+  process.exit(0);
+}
+
 // F1 mock backend — a health-probe stub ONLY (timing/contract testing).
 // It is NOT PixivFlow and carries no business logic. Real backend arrives in F2.
 import { createServer } from "node:http";

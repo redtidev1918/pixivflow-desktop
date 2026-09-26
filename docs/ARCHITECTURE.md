@@ -44,3 +44,28 @@ serving; it never re-implements the interface.
 `desktop-manifest.json` declares which upstream versions the desktop expects.
 `releasegraph` reads it to drive automatic upgrade PRs (see
 [RELEASE.md](RELEASE.md)).
+
+## Backend command adapter & discovery (F2.1)
+
+`BackendManager` is deliberately a **pure lifecycle owner**: `start` / `stop` /
+`restart` / `health_check`. It never learns PixivFlow business logic. Deciding
+*which command to run* is the job of the discovery/adapter layer
+(`src-tauri/src/backend/discovery.rs`), which resolves in priority order:
+
+1. bundled `resources/runtime/pixivflow` (shipped inside the app)
+2. user-configured `backend.command` + `backend.args`
+3. `pixivflow` found on `PATH`
+4. fallback: bundled mock backend (dev/testing only)
+
+Resolution result (`BackendDescriptor{source, executable_path, command, version}`)
+is injected into the manager via `set_command_override()` before `start()`; the
+manager's own fallback (config `command` → mock) is unchanged. The `backend_doctor`
+Tauri command surfaces the same resolution plus live runtime status
+(`running` / `healthy`), with `version` probed by running `<command> --version`
+under a timeout.
+
+Backend config shape (flat, per the desktop-config contract):
+
+```json
+{ "backend": { "mode": "local", "command": "", "args": [], "port": 3000, "autoStart": true } }
+```

@@ -36,6 +36,8 @@ pub struct StatusSnapshot {
 
 pub struct BackendManager {
     config: AppConfig,
+    /// Adapter-injected command (from discovery). Preferred over config/mock.
+    command_override: Option<(String, Vec<String>)>,
     child: Mutex<Option<Child>>,
     /// Last healthy probe result, kept in sync by the caller's poll loop.
     healthy: Mutex<Option<bool>>,
@@ -44,7 +46,13 @@ pub struct BackendManager {
 
 impl BackendManager {
     pub fn new(config: AppConfig) -> Self {
-        Self { config, child: Mutex::new(None), healthy: Mutex::new(None), last_error: Mutex::new(None) }
+        Self {
+            config,
+            command_override: None,
+            child: Mutex::new(None),
+            healthy: Mutex::new(None),
+            last_error: Mutex::new(None),
+        }
     }
 
     pub fn is_running(&self) -> bool {
@@ -68,6 +76,17 @@ impl BackendManager {
 
     pub fn config_clone(&self) -> AppConfig {
         self.config.clone()
+    }
+
+    /// Inject the command chosen by the discovery adapter. `None` restores the
+    /// default resolution (config `backend.command`, else the bundled mock).
+    /// This is an adapter wiring point only — it does NOT change the lifecycle.
+    pub fn set_command_override(&mut self, command: Option<(String, Vec<String>)>) {
+        self.command_override = command;
+    }
+
+    pub fn command_override(&self) -> Option<(String, Vec<String>)> {
+        self.command_override.clone()
     }
 
     pub fn report_err(&self, e: &str) {
@@ -174,9 +193,13 @@ impl BackendManager {
     }
 
     fn resolve_command(&self) -> Result<(String, Vec<String>), String> {
-        let bc = &self.config.backend.command;
-        if !bc.command.trim().is_empty() {
-            return Ok((bc.command.clone(), bc.args.clone()));
+        if let Some((cmd, args)) = &self.command_override {
+            if !cmd.is_empty() {
+                return Ok((cmd.clone(), args.clone()));
+            }
+        }
+        if !self.config.backend.command.trim().is_empty() {
+            return Ok((self.config.backend.command.clone(), self.config.backend.args.clone()));
         }
         // Dev default: the bundled mock backend (health-probe stub). F2 replaces
         // this with the real PixivFlow via BackendCommand.

@@ -8,23 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::Manager;
 
-/// Backend process override. Empty by default; F2 points this at the real
-/// PixivFlow so we never assume a fixed path.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct BackendCommand {
-    /// Executable path (or bare command resolved via PATH).
-    pub command: String,
-    /// Extra arguments passed to the command.
-    #[serde(default)]
-    pub args: Vec<String>,
-}
-impl Default for BackendCommand {
-    fn default() -> Self {
-        Self { command: String::new(), args: Vec::new() }
-    }
-}
-
+/// Backend process override (F2.1 adapter). `command` is a plain executable
+/// path or a bare command resolved via PATH. Empty by default: F2 points this
+/// at the real PixivFlow so we never assume a fixed path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BackendConfig {
@@ -33,11 +19,13 @@ pub struct BackendConfig {
     #[serde(default = "default_true")]
     pub auto_start: bool,
     #[serde(default)]
-    pub command: BackendCommand,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 impl Default for BackendConfig {
     fn default() -> Self {
-        Self { port: default_port(), auto_start: default_true(), command: BackendCommand::default() }
+        Self { port: default_port(), auto_start: default_true(), command: String::new(), args: Vec::new() }
     }
 }
 
