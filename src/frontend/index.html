@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -14,38 +14,38 @@
         <div class="brand-mark" aria-hidden="true">◧</div>
         <div class="brand-text">
           <h1>PixivFlow Desktop</h1>
-          <p class="tagline">PixivFlow 的桌面运行环境和管理器</p>
+          <p class="tagline" data-i18n="app.tagline">The desktop runtime and manager for PixivFlow</p>
         </div>
       </header>
 
-      <p id="status-line" class="status-line">Starting PixivFlow…</p>
+      <p id="status-line" class="status-line" data-i18n="line.starting">Starting PixivFlow…</p>
 
       <section class="card backend-card">
         <div class="backend-head">
-          <span class="card-title">Backend Status</span>
-          <span id="badge" class="badge badge-starting">Starting</span>
+          <span class="card-title" data-i18n="card.backendStatus">Backend Status</span>
+          <span id="badge" class="badge badge-starting" data-i18n="badge.starting">Starting</span>
         </div>
         <dl class="meta-grid">
-          <div><dt>Port</dt><dd id="meta-port">—</dd></div>
-          <div><dt>PID</dt><dd id="meta-pid">—</dd></div>
-          <div><dt>Health</dt><dd id="meta-health">Waiting…</dd></div>
+          <div><dt data-i18n="meta.port">Port</dt><dd id="meta-port">—</dd></div>
+          <div><dt data-i18n="meta.pid">PID</dt><dd id="meta-pid">—</dd></div>
+          <div><dt data-i18n="meta.health">Health</dt><dd id="meta-health" data-i18n="meta.waiting">Waiting…</dd></div>
         </dl>
       </section>
 
       <!-- Error surface: start failures / missing runtime / health stalls render
            here instead of leaving a blank window. -->
       <section id="error-box" class="error-box hidden">
-        <strong id="error-title" class="error-title">Backend Error</strong>
+        <strong id="error-title" class="error-title" data-i18n="error.backendError">Backend Error</strong>
         <div id="error-reason" class="error-label"></div>
         <pre id="error-detail" class="error-detail"></pre>
-        <button id="btn-error-restart" class="btn">Restart</button>
+        <button id="btn-error-restart" class="btn" data-i18n="action.restart">Restart</button>
       </section>
 
       <div class="actions">
-        <button id="btn-open-webui" class="btn btn-primary" title="Open the PixivFlow WebUI served by the backend">打开 PixivFlow</button>
-        <button id="btn-restart" class="btn" title="Restart the local backend">Restart</button>
-        <button id="btn-stop" class="btn" title="Stop the local backend">Stop</button>
-        <button id="btn-open-logs" class="btn" title="Open logs/desktop.log">Open Logs</button>
+        <button id="btn-open-webui" class="btn btn-primary" data-i18n-title="title.openWebui" data-i18n="action.openWebui" title="Open the PixivFlow WebUI served by the backend">Open PixivFlow</button>
+        <button id="btn-restart" class="btn" data-i18n-title="title.restart" data-i18n="action.restart" title="Restart the local backend">Restart</button>
+        <button id="btn-stop" class="btn" data-i18n-title="title.stop" data-i18n="action.stop" title="Stop the local backend">Stop</button>
+        <button id="btn-open-logs" class="btn" data-i18n-title="title.openLogs" data-i18n="action.openLogs" title="Open logs/desktop.log">Open Logs</button>
       </div>
 
       <footer class="foot">
