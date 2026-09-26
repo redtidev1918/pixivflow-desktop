@@ -165,19 +165,89 @@ fn storage_path(document: &serde_json::Value, key: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+/// The JSON config documents in `dir`, sorted for a stable result.
+fn json_documents(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut documents: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().map(|e| e == "json").unwrap_or(false))
+        .collect();
+    documents.sort();
+    documents
+}
+
+/// Where a desktop-launched PixivFlow keeps its user-level configuration.
+///
+/// The backend is spawned with its working directory set to the data root, and
+/// its own config discovery *also* looks in `$HOME/.pixivflow/config` — the
+/// location anyone who used PixivFlow before the desktop existed still has, and
+/// where a WebUI config edit is written. A download directory configured there
+/// as an absolute path is just as real as one in the data root, so it has to be
+/// enumerated here too; a relative one resolves against the working directory,
+/// i.e. the data root.
+fn user_config_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())?;
+    Some(PathBuf::from(home).join(".pixivflow").join("config"))
+}
+
+/// Add the `storage` directories named by every readable config document.
+///
+/// A document that cannot be read or parsed contributes nothing at all — the
+/// rules widen only from configuration that is really there.
+fn push_document_roots(
+    documents: Vec<PathBuf>,
+    base: Option<&Path>,
+    roots: &mut Vec<PathBuf>,
+) {
+    for document_path in documents {
+        let Ok(text) = std::fs::read_to_string(&document_path) else {
+            continue;
+        };
+        let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        for key in [
+            "downloadDirectory",
+            "illustrationDirectory",
+            "novelDirectory",
+        ] {
+            if let Some(value) = storage_path(&document, key) {
+                push_root(roots, &value, base);
+            }
+        }
+    }
+}
+
 /// Every directory this installation is allowed to reveal from.
 ///
 /// Four sources, all read-only:
 ///  - the backend data root and its default `downloads/` directory;
 ///  - `downloadDir` from the desktop's own config, when the user set one;
 ///  - the `storage` directories of every PixivFlow config document in
-///    `<data root>/config` and `<data root>`, which is where a WebUI config
-///    edit lands (a user who moved downloads to `/Volumes/Photos` must still
-///    be able to reveal them).
+///    `<data root>/config` and `<data root>`;
+///  - the same `storage` keys in the user-level config documents
+///    (`$HOME/.pixivflow/config/*.json`), which is where a WebUI config edit
+///    lands (a user who moved downloads to `/Volumes/Photos` must still be able
+///    to reveal them).
 ///
 /// Anything else — the home directory, a system path, another user's data — is
 /// simply not a root, so it can never be revealed.
 pub fn allowed_roots(data_root: Option<&Path>, desktop_config: &Path) -> Vec<PathBuf> {
+    allowed_roots_in(data_root, desktop_config, user_config_dir().as_deref())
+}
+
+/// [`allowed_roots`] with the user-level config directory supplied by the
+/// caller, so the rules can be tested without reading the real `$HOME`.
+fn allowed_roots_in(
+    data_root: Option<&Path>,
+    desktop_config: &Path,
+    user_config: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
 
     if let Some(root) = data_root {
@@ -186,42 +256,21 @@ pub fn allowed_roots(data_root: Option<&Path>, desktop_config: &Path) -> Vec<Pat
         // it are enumerated.
         push_root(&mut roots, &root.join("downloads").to_string_lossy(), None);
 
-        // PixivFlow config documents (`<data root>/config/*.json`, plus a
+        // PixivFlow config documents (`<data root>/config/*.json` and a
         // top-level one) own the real download directories.
-        let mut documents: Vec<PathBuf> = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(root.join("config")) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map(|e| e == "json").unwrap_or(false) {
-                    documents.push(path);
-                }
-            }
-        }
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map(|e| e == "json").unwrap_or(false) {
-                    documents.push(path);
-                }
-            }
-        }
-        for document_path in documents {
-            let Ok(text) = std::fs::read_to_string(&document_path) else {
-                continue;
-            };
-            let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
-                continue;
-            };
-            for key in [
-                "downloadDirectory",
-                "illustrationDirectory",
-                "novelDirectory",
-            ] {
-                if let Some(value) = storage_path(&document, key) {
-                    push_root(&mut roots, &value, Some(root));
-                }
-            }
-        }
+        let mut documents = json_documents(&root.join("config"));
+        documents.extend(json_documents(root));
+        push_document_roots(documents, Some(root), &mut roots);
+    }
+
+    // The user-level config location, where a WebUI edit lands when PixivFlow
+    // was installed before the desktop existed. A relative value there resolves
+    // against the backend's working directory — the data root — exactly like
+    // the data-root documents; without a data root the document's own directory
+    // is the only honest base.
+    if let Some(user_config) = user_config {
+        let base = data_root.or_else(|| user_config.parent());
+        push_document_roots(json_documents(user_config), base, &mut roots);
     }
 
     if let Ok(text) = std::fs::read_to_string(desktop_config) {
@@ -369,7 +418,7 @@ mod tests {
         std::fs::create_dir_all(&sibling).unwrap();
         std::fs::write(sibling.join("b.png"), "png").unwrap();
 
-        let roots = allowed_roots(Some(&root), &root.join("desktop-config.json"));
+        let roots = allowed_roots_in(Some(&root), &root.join("desktop-config.json"), None);
 
         let inside = downloads.join("illustrations/a.png");
         assert_eq!(
@@ -402,7 +451,7 @@ mod tests {
         let root = scratch("missing");
         let downloads = root.join("downloads");
         std::fs::create_dir_all(downloads.join("illustrations")).unwrap();
-        let roots = allowed_roots(Some(&root), &root.join("desktop-config.json"));
+        let roots = allowed_roots_in(Some(&root), &root.join("desktop-config.json"), None);
 
         // The leaf is gone: still confined, so the folder can be shown.
         let gone = downloads.join("illustrations/deleted.png");
@@ -451,13 +500,47 @@ mod tests {
         )
         .unwrap();
 
-        let roots = allowed_roots(Some(&root), &desktop_config);
+        let roots = allowed_roots_in(Some(&root), &desktop_config, None);
         for expected in ["lib", "pics", "picked"] {
             let dir = std::fs::canonicalize(root.join(expected)).unwrap();
             assert!(roots.contains(&dir), "missing root {}", expected);
         }
         // A directory that does not exist cannot be a root.
         assert!(!roots.iter().any(|r| r.ends_with("nonexistent-not-a-root")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_download_directory_set_in_the_user_config_is_revealable() {
+        // A user who installed PixivFlow before the desktop keeps their config
+        // in `$HOME/.pixivflow/config`, and the WebUI writes edits there: an
+        // absolute download directory must still be revealable.
+        let root = scratch("user-roots");
+        let user_config = root.join("home/.pixivflow/config");
+        std::fs::create_dir_all(&user_config).unwrap();
+        let archive = root.join("Volumes-ish/Archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        std::fs::write(
+            user_config.join("standalone.config.json"),
+            serde_json::json!({
+                "storage": {
+                    "illustrationDirectory": archive.to_string_lossy(),
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let roots = allowed_roots_in(
+            None,
+            &root.join("desktop-config.json"),
+            Some(&user_config),
+        );
+        assert!(
+            roots.contains(&std::fs::canonicalize(&archive).unwrap()),
+            "the user-level config directory must contribute roots: {roots:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
