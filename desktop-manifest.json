@@ -1,0 +1,14 @@
+{
+  "$schema": "https://redtidev1918.github.io/pixivflow-desktop/desktop-manifest.schema.json",
+  "$comment": "Component version lock for PixivFlow Desktop. releasegraph reads this to detect when an upstream (PixivFlow / pixivflow-webui) released a newer version and drives the desktop auto-upgrade PR. Bump components only via a release or an explicit, reviewed upgrade PR — never commit an unpinned/unreleased dependency.",
+  "schemaVersion": 1,
+  "app": {
+    "name": "pixivflow-desktop",
+    "version": "0.1.0"
+  },
+  "components": {
+    "pixivflow": "2.46.0",
+    "pixivflow-webui": "1.1.0"
+  },
+  "updatedAt": "2026-09-26T00:00:00Z"
+}

@@ -1,0 +1,36 @@
+{
+  "name": "pixivflow-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-platform desktop shell for PixivFlow backend + WebUI (Tauri 2 + Rust).",
+  "keywords": [
+    "pixiv",
+    "pixivflow",
+    "tauri",
+    "desktop",
+    "rust"
+  ],
+  "license": "MIT",
+  "author": "redtidev1918",
+  "homepage": "https://github.com/redtidev1918/pixivflow-desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/redtidev1918/pixivflow-desktop.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "bundle:backend": "node scripts/bundle-backend.mjs",
+    "bundle:webui": "node scripts/bundle-webui.mjs",
+    "bundle": "npm run bundle:webui && npm run bundle:backend",
+    "icon": "tauri icon assets/icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

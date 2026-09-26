@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the desktop shell (splash/settings) windows. The main window loads an external WebUI origin and does not need Tauri JS permissions.",
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-title",
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging"
+  ]
+}

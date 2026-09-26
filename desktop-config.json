@@ -1,0 +1,17 @@
+{
+  "$comment": "Example/default desktop configuration. The runtime copy lives in the OS app-config directory (see docs/DEVELOPMENT.md#configuration) and is created automatically on first launch, so this file is a documented reference of the shape, not the active config. Empty string fields mean 'use the desktop default (resolved at runtime against OS app dirs)'.",
+  "mode": "local",
+  "remoteUrl": "",
+  "backend": {
+    "autoStart": true,
+    "host": "127.0.0.1",
+    "port": 3000,
+    "nodePath": "",
+    "distPath": "",
+    "command": "",
+    "launchTimeoutMs": 60000
+  },
+  "dataDir": "",
+  "downloadDir": "",
+  "logsDir": ""
+}

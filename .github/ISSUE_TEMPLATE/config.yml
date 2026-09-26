@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: PixivFlow ecosystem
+    url: https://github.com/redtidev1918/PixivFlow
+    about: For questions specific to the PixivFlow backend.
+  - name: pixivflow-webui
+    url: https://github.com/redtidev1918/pixivflow-webui
+    about: For questions specific to the WebUI front end.
