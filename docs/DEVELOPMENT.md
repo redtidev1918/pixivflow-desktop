@@ -140,6 +140,57 @@ placeholder with
 `git checkout -- src-tauri/resources/webui/dist/index.html` and remove
 `src-tauri/resources/webui/dist/assets/`.
 
+## Building the app bundle
+
+The bundle must be produced by the Tauri build, never assembled by hand: the
+bundler is what signs every Mach-O payload (including the bundled `node`). A
+copy-pasted bundle signs nothing, and macOS then kills the standalone `node` with
+`SIGKILL` — the app starts, the launcher window appears, and the only symptom is
+`health not confirmed within attempt budget` / `backend did not become healthy`
+in the desktop log.
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+npx tauri build --bundles app      # or: npm run tauri -- build --bundles app
+```
+
+Two environment traps have already cost real debugging time:
+
+**1. `process.execPath` is not always Node.** `scripts/fetch-pixivflow-runtime.mjs`
+bundles "the running standalone node" via `process.execPath`. When the script runs
+*inside* an Electron/desktop host (including this project's own DSH agent
+session), that path is the host's helper executable, not Node — so a ~200 KB
+binary gets laid into `resources/runtime/pixivflow/node` and the app cannot start
+its backend. Always confirm the result before building:
+
+```bash
+ls -la src-tauri/resources/runtime/pixivflow/node   # must be ~110 MB, and
+src-tauri/resources/runtime/pixivflow/node --version  # must print v2x.y.z
+```
+
+If it is small, or exits with `Killed: 9`, re-run the fetch under a real Node
+(an absolute path from a version manager is the reliable choice):
+
+```bash
+/path/to/real/node scripts/fetch-pixivflow-runtime.mjs --source /path/to/PixivFlow
+```
+
+**2. `node_modules/.bin/tauri` misparses `process.argv` under an Electron host.**
+The JS wrapper inspects `process.argv[0]` to decide whether it is running under
+Node/Bun/Electron; an unrecognized host executable falls through to
+`args.unshift(bin)`, which turns the host path into a subcommand and fails with
+`error: unrecognized subcommand '/Applications/.../DSH Desktop Helper'`. Call the
+native entry point directly instead of going through the shim:
+
+```bash
+node -e "const {run,logError}=require('./node_modules/@tauri-apps/cli/index.js'); \
+  run(['build','--bundles','app'],'tauri',(e,r)=>{if(e){logError(e.message);process.exit(1);}})"
+```
+
+Keep `src-tauri/resources/webui/dist` and `src-tauri/resources/runtime/pixivflow`
+restored to their committed state before committing; a built `.app` is never
+committed either.
+
 ## Bundling the real PixivFlow runtime (F2.3)
 
 To lay the real backend into the bundle (a git-ignored local artifact) and point

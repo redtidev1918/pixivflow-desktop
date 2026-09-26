@@ -427,6 +427,44 @@ Avoid:
 Suggested message style for docs-only work, e.g.:
 `docs: add agent guidelines and architecture documentation`
 
+## Working alongside other agents
+
+More than one agent session can be editing this repo at the same time. Treat every
+file as shared:
+
+- **Re-read before you commit.** `git status` and `git diff` immediately before
+  staging. Your own edit log is not evidence — a file may have changed under you.
+- **Never stage, revert, or "clean up" work you did not write.** If a change is
+  not yours, leave it alone and say so in the report.
+- **One repo, one boundary.** Touch only files inside this checkout. Built
+  artifacts (`src-tauri/target/`, a built `.app`) are never committed; the
+  git-ignored bundle inputs (`src-tauri/resources/webui/dist`,
+  `src-tauri/resources/runtime/pixivflow/{dist,node_modules,node}`) are local
+  working state that must be restored to the committed state before committing.
+- **Generated/machine-local files stay out of history.** Commit only source and
+  docs; never a path pointer, a version stamp, or an assembled bundle.
+
+## Verification gates (do not skip)
+
+Run these before declaring any change done, and report the actual output:
+
+```bash
+cargo test                                   # unit + integration
+cargo check                                  # no new warnings
+npm run test                                 # frontend + dist smoke check
+npm run build && git status --porcelain      # build must not dirty the tree
+```
+
+For a change that reaches the running app, also build and launch the installed
+bundle (`docs/DEVELOPMENT.md` → *Building the app bundle*) and confirm the app
+reaches `health OK` with the WebUI window auto-opened. Rust-only unit tests do
+not prove that a bridge command is reachable from the remote page: ACL mistakes
+only appear at runtime, so a new capability needs at least one real invocation
+through `window.pixivflowHost` and its result in the desktop log.
+
+Report in this order: what changed, what was verified (command → result), which
+docs moved, the commit hash, and whether it was pushed.
+
 ## Cross-repo sync (upstream follows downstream)
 
 This repo is the **downstream** host of two upstreams: `PixivFlow` (backend,

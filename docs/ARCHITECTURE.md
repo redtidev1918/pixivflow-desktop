@@ -257,6 +257,46 @@ second OS window or the user's browser:
   parent from the `RunEvent::WindowEvent { Resized }` hook and always closed
   before the command returns.
 
+### Host capabilities
+
+The host bridge is the only door between the WebUI page and the device. The page
+never calls a capability it has not probed, and the host never re-derives what the
+page already resolved:
+
+| Bridge function | Rust command | Semantics |
+| --- | --- | --- |
+| `openLoginWindow(authUrl, redirectUri)` | `open_login_window` | embedded Pixiv sign-in, resolves `{ code }` or `null` |
+| `revealPath(path)` | `reveal_path` | "Show in Finder" — file selected in its parent, directory opened |
+| `notify({ title, body, level })` | `notify` | OS notification; resolves `{ shown, reason? }` |
+| `openExternal(url)` | `open_external` | user's default browser / handler |
+| `openUrl(url)` | `open_in_app` | navigate the `webui` window itself (same-origin only) |
+
+Each capability is a thin Rust command over a **pure invocation matrix** in
+`src-tauri/src/{reveal,notify,link}.rs`: the platform decision is a `cfg!`-based
+function returning a program + argv (or an explicit `Unavailable`), so the matrix
+is unit-testable on any machine and no code path ever builds a shell string. The
+command validates and then spawns; it does not interpret, expand, or guess paths
+and URLs. Refusals are encoded in the error/reason string
+(`REVEAL_FORBIDDEN`, `NOTIFY_UNAVAILABLE`, `LINK_INVALID`, …) and the page
+reports them as "not available here" — never as success.
+
+Two rules keep this boundary honest:
+
+- **Device-facing work belongs to the host.** Finding a file, showing a native
+  notification, opening a URL, and reading the clipboard are properties of the
+  machine in front of the user, not of the PixivFlow runtime. The runtime only
+  answers *where a file is* (`GET /api/files/location`); it must never spawn a
+  desktop program, because `browser → remote backend → xdg-open` on a server is
+  meaningless and misleads the user into thinking it opened their own machine.
+- **`openExternal` and `openUrl` stay separate.** One promises "hand this to the
+  OS", the other "navigate inside this app". Collapsing them into a single
+  "open" would silently pick a destination the caller did not ask for.
+
+The macOS notification path deliberately uses `osascript -l JavaScript` with the
+title and body passed as `argv` (JXA does not re-escape them), rather than pulling
+in a notification plugin; Windows reports `NOTIFY_UNAVAILABLE` instead of faking
+a toast that would need an AppUserModelID registration.
+
 Backend config shape (flat, per the desktop-config contract — `mode` is a
 **top-level** field, not under `backend`):
 
@@ -320,7 +360,8 @@ dependency-free (`src-tauri/src/logger.rs`).
   forward `error` / `unhandledrejection` (and launcher render errors) to the
   `log_frontend` command, capped per page load and truncated, so a WebUI-side
   failure still leaves a Rust-side trace. The remote `webui` capability allows
-  exactly two commands: the login bridge and `log_frontend`.
+  the login bridge, `log_frontend`, and the four device-facing capabilities
+  below — and nothing else.
 - **Diagnostics bundle** — `export_diagnostics` copies the log + rotations,
   `last-run.json`, collected `crash-*.ips`, `doctor.json`, a `config.json` whose
   secret-looking values are replaced by `"***"`, and `env.txt` into
