@@ -52,10 +52,12 @@ function run(cmd, opts = {}) {
 
 function resolveSource(spec, baseDir) {
   if (!spec) {
+    // Search from the repository root, not from `scripts/`: the documented
+    // default is `../redtidev1918/PixivFlow` next to this checkout.
     const cands = [
-      resolve(baseDir, '..', 'redtidev1918', 'PixivFlow'),
-      resolve(baseDir, '..', 'PixivFlow'),
-      resolve(baseDir, 'PixivFlow'),
+      resolve(ROOT, '..', 'redtidev1918', 'PixivFlow'),
+      resolve(ROOT, '..', 'PixivFlow'),
+      resolve(ROOT, 'PixivFlow'),
     ];
     for (const c of cands) {
       const pj = join(c, 'package.json');
