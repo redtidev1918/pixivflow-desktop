@@ -1,13 +1,17 @@
 {
   "name": "pixivflow-desktop",
+  "productName": "PixivFlow Desktop",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Cross-platform desktop shell for PixivFlow (Tauri 2). F1 — Desktop Shell MVP.",
-  "license": "MIT",
+  "description": "PixivFlow Desktop — native desktop shell, local backend lifecycle management and runtime status monitoring.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "node scripts/check-dist.mjs",
+    "test": "node --test src/frontend/*.test.mjs && node scripts/check-dist.mjs",
+    "test:frontend": "node --test src/frontend/*.test.mjs",
+    "test:dist": "node scripts/check-dist.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

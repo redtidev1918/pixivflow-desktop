@@ -197,3 +197,42 @@ pub fn backend_doctor(state: State<'_, ManagedState>) -> DoctorReport {
         message,
     }
 }
+
+
+/// Open the desktop log file in the platform's default viewer.
+#[tauri::command]
+pub fn open_logs(state: State<'_, ManagedState>) -> Result<(), String> {
+    let path = state.log.path().to_string();
+    open_in_default_viewer(&path)
+}
+
+/// Spawn the OS file opener for `path`. No waiting; failures surface as Err.
+fn open_in_default_viewer(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .arg(path)
+            .status()
+            .map(|_| ())
+            .map_err(|e| format!("failed to open log {path}: {e}"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("cmd")
+            .args(["/C", "start", "", path])
+            .status()
+            .map(|_| ())
+            .map_err(|e| format!("failed to open log {path}: {e}"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        use std::process::Command;
+        Command::new("xdg-open")
+            .arg(path)
+            .status()
+            .map(|_| ())
+            .map_err(|e| format!("failed to open log {path}: {e}"))
+    }
+}

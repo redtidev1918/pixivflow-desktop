@@ -1,120 +1,111 @@
-// F1 frontend shell — status display only.
-// All system capability is owned by Rust; this page only renders state
-// and forwards user intent through Tauri commands (invoke).
+// Bootstrap UI controller. Responsibilities limited to: render status, react
+// to button clicks, surface errors. All Tauri calls are try/catch-wrapped so
+// an IPC failure renders an error state instead of a blank page.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { deriveView } from "./state.js";
 
-// ---- state rendering ----------------------------------------------------
-const dot = document.getElementById("status-dot");
-const label = document.getElementById("status-label");
-const detail = document.getElementById("status-detail");
-const metaPort = document.getElementById("meta-port");
-const metaPid = document.getElementById("meta-pid");
-const metaMode = document.getElementById("meta-mode");
-const metaConfig = document.getElementById("meta-config");
-const logEl = document.getElementById("log");
-const modeEl = document.getElementById("mode");
-const metaSrc = document.getElementById("meta-src");
-const metaVer = document.getElementById("meta-ver");
-
-const STATE_STYLES = {
-  running: { dot: "dot-running", text: "Backend running", ok: true },
-  starting: { dot: "dot-starting", text: "Starting…", ok: false },
-  stopped: { dot: "dot-stopped", text: "Backend stopped", ok: true },
-  error: { dot: "dot-error", text: "Error", ok: false },
-  unknown: { dot: "dot-unknown", text: "未知状态", ok: false },
+const el = {
+  badge: document.getElementById("badge"),
+  line: document.getElementById("status-line"),
+  port: document.getElementById("meta-port"),
+  pid: document.getElementById("meta-pid"),
+  health: document.getElementById("meta-health"),
+  errorBox: document.getElementById("error-box"),
+  errorTitle: document.getElementById("error-title"),
+  errorLabel: document.getElementById("error-reason"),
+  errorDetail: document.getElementById("error-detail"),
+  errorRestart: document.getElementById("btn-error-restart"),
+  restart: document.getElementById("btn-restart"),
+  openLogs: document.getElementById("btn-open-logs"),
+  footSrc: document.getElementById("foot-src"),
+  footVer: document.getElementById("foot-ver"),
+  footMode: document.getElementById("foot-mode"),
 };
 
-function render(status) {
-  const s = STATE_STYLES[status.state] ?? STATE_STYLES.unknown;
-  dot.className = "dot " + s.dot;
-  label.textContent = s.text;
-  label.style.color = s.ok ? "var(--fg)" : "var(--accent)";
-  detail.textContent = status.message ?? "";
-  metaPort.textContent = status.port ?? "—";
-  metaPid.textContent = status.pid ?? (status.state === "starting" ? "启动中…" : "—");
-  metaMode.textContent = status.mode;
-  modeEl.textContent = status.mode;
-  if (status.port) metaPort.textContent = status.port;
+function renderView(status) {
+  const v = deriveView(status);
+  el.badge.className = "badge " + v.dot;
+  el.badge.textContent = v.badgeText;
+  el.line.textContent = v.line;
+  el.port.textContent = v.port;
+  el.pid.textContent = v.pid;
+  el.health.textContent = v.health;
+  if (v.showError) {
+    el.errorTitle.textContent = v.errorTitle;
+    el.errorLabel.textContent = v.errorLabel;
+    el.errorDetail.textContent = v.message || "";
+    el.errorBox.classList.remove("hidden");
+  } else {
+    el.errorBox.classList.add("hidden");
+  }
 }
 
-function appendLog(line) {
-  const stamp = new Date().toLocaleTimeString();
-  logEl.textContent += `[${stamp}] ${line}\n`;
-  logEl.scrollTop = logEl.scrollHeight;
+// Never let any single failure blank the page — route it to the error surface.
+function renderError(error) {
+  const msg = error && error.message ? String(error.message) : String(error);
+  renderView({ state: "error", message: msg });
 }
 
 async function refresh() {
   try {
-    render(await invoke("get_status"));
-  } catch (e) {
-    render({ state: "error", message: String(e) });
+    const status = await invoke("get_status");
+    renderView(status);
+  } catch (err) {
+    renderError(err);
   }
 }
 
-async function withLock(fn) {
-  try {
-    render({ state: "starting", message: "执行中…" });
-    render(await fn());
-  } catch (e) {
-    render({ state: "error", message: String(e) });
-    appendLog("操作失败: " + e);
-  }
-}
-
-// ---- bootstrap ----------------------------------------------------------
-window.addEventListener("DOMContentLoaded", async () => {
-  // keep status in sync via Rust events + a light poll
-  listen("backend-status", (e) => render(e.payload));
-  setInterval(refresh, 1000);
-
-  document.getElementById("btn-start").addEventListener("click", (e) => {
-    e.currentTarget.disabled = true;
-    withLock(() => invoke("start_backend"));
-    setTimeout(() => (e.currentTarget.disabled = false), 1500);
-  });
-  document.getElementById("btn-stop").addEventListener("click", (e) => {
-    e.currentTarget.disabled = true;
-    withLock(() => invoke("stop_backend"));
-    setTimeout(() => (e.currentTarget.disabled = false), 1500);
-  });
-  document.getElementById("btn-restart").addEventListener("click", (e) => {
-    e.currentTarget.disabled = true;
-    withLock(() => invoke("restart_backend"));
-    setTimeout(() => (e.currentTarget.disabled = false), 1500);
-  });
-
-  // load config path for display
-  try {
-    const cfg = await invoke("get_config");
-    metaMode.textContent = cfg.mode ?? "local";
-  } catch (_) {
-    /* non-fatal */
-  }
-  try {
-    metaConfig.textContent = await invoke("config_path");
-  } catch (_) {
-    metaConfig.textContent = "—";
-  }
-
-  await refresh();
-  renderDoctor();
-  appendLog("前端壳已加载");
-});
-
-// F2.1 — compact backend-doctor readout (resolved source + version, no new UI).
-async function renderDoctor() {
+async function loadDoctor() {
   try {
     const d = await invoke("backend_doctor");
-    const src = d.source ?? "?";
-    if (metaSrc) metaSrc.textContent = src;
-    if (metaVer) metaVer.textContent = d.version ?? (d.backend_found ? "—" : "none");
-    const kind = d.running
-      ? (d.healthy ? "healthy" : "unhealthy")
-      : "stopped";
-    appendLog(`doctor: ${src} backend v${d.version ?? "?"} · ${kind} · ${d.message}`);
-  } catch (e) {
-    if (metaSrc) metaSrc.textContent = "?";
-    appendLog("doctor 失败: " + e);
+    el.footSrc.textContent = "source: " + (d && d.source != null ? d.source : "?");
+    el.footVer.textContent = "version: " + (d && d.version != null ? d.version : "?");
+  } catch (_) {
+    /* non-fatal footer info */
   }
 }
+
+async function restart(action) {
+  try {
+    const status = await invoke(action);
+    renderView(status);
+  } catch (err) {
+    renderError(err);
+  }
+}
+
+function bindButton(btn, action) {
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    await restart(action);
+    setTimeout(() => (btn.disabled = false), 1200);
+  });
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  // Immediate first frame from boot shell (already visible); then sticky events.
+  const shell = { state: "starting" };
+  renderView(shell);
+  renderView(shell); // idempotent
+
+  try {
+    listen("backend-status", (e) => renderView(e && e.payload ? e.payload : shell));
+  } catch (err) {
+    renderError(err);
+  }
+
+  bindButton(el.restart, "restart_backend");
+  bindButton(el.errorRestart, "restart_backend");
+  el.openLogs.addEventListener("click", async () => {
+    try {
+      await invoke("open_logs");
+    } catch (err) {
+      renderError(err);
+    }
+  });
+
+  loadDoctor();
+  refresh();
+  setInterval(refresh, 1000);
+});

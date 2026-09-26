@@ -1,18 +1,18 @@
 import { defineConfig } from "vite";
 
-// F1 frontend: a plain status shell — vanilla JS calling Tauri commands via
-// invoke. Frontend lives under src/frontend; build lands in <repo>/dist so
-// tauri.conf.json frontendDist ("../dist") resolves correctly.
+// base: "./" is the Fix for the white-screen bug — without it Vite emits
+// absolute `/assets/...` URLs that fail to resolve under the Tauri custom
+// protocol (webview loads blank). Relative base keeps production builds working.
 export default defineConfig({
   root: "src/frontend",
-  clearScreen: false,
-  server: {
-    port: 1420,
-    strictPort: true,
-    watch: { ignored: ["**/src-tauri/**"] },
-  },
+  base: "./",
+  plugins: [],
   build: {
     outDir: "../../dist",
     emptyOutDir: true,
+  },
+  server: {
+    port: 1420,
+    strictPort: true,
   },
 });

@@ -21,13 +21,29 @@ It is:
 Business logic stays in upstream PixivFlow. The desktop only launches, supervises,
 contains and updates it.
 
-## Status (F1 — Shell MVP)
+## Features
 
-Runnable Tauri 2 shell: launches a window, reads `desktop-config.json`, starts the
-backend, health-checks `/api/health` and stops it gracefully on window close.
-F1 ships a bundled **mock backend** as the health stand-in; the real PixivFlow
-integration is Phase 2. See [docs/ROADMAP.md](/docs/ROADMAP.md) for the full
-phase plan and [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
+- **Native desktop experience** — a fast, self-contained Tauri 2 shell that boots
+  straight into a PixivFlow Desktop bootstrap UI (never a blank window).
+- **Local backend lifecycle management** — the Rust `BackendManager` starts,
+  stops (graceful SIGTERM) and restarts the local backend process, and manages
+  its runtime discovery (bundled → config → PATH → dev mock fallback).
+- **Runtime status monitoring** — live port / PID / health readout fed by the
+  `/api/health` probe and pushed to the UI via the `backend-status` event.
+- **Configuration** — reads `desktop-config.json` (auto-created with defaults)
+  for backend port, auto-start, and command override.
+- **WebUI integration** — the foundation for opening `pixivflow-webui` once the
+  backend is healthy (wired in a later phase).
+
+## Status (F1.1 — Bootstrap UI)
+
+Runnable Tauri 2 shell with a real startup experience: launches a window, reads
+`desktop-config.json`, starts the backend, health-checks `/api/health` and stops
+it gracefully on window close. The white-screen defect is fixed (relative Vite
+`base` + defensive frontend error handling), and the mock backend ships as the
+health stand-in for development tests; integration with the real PixivFlow
+runtime is Phase 2. See [docs/ROADMAP.md](/docs/ROADMAP.md) for the full phase
+plan and [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
 
 ## Architecture
 
@@ -82,10 +98,15 @@ automatic upgrade flow.
 
 ## Project status
 
-**F0 — Foundation.** This is the approved repository skeleton: structure,
-documentation and contracts only. No Tauri project has been initialized, no Rust
-is written yet, and the backend is **not** started or packaged at this stage.
-Business logic is intentionally absent.
+**F1.1 — Bootstrap UI.** F0 (foundation skeleton) → F1 (Desktop Shell MVP) →
+F1.1 (boot experience, white-screen fix, product naming). The current build is a
+runnable Tauri 2 desktop app that launches a branded bootstrap UI and manages the
+local backend lifecycle against a bundled mock backend.
+
+Not yet available (intentionally, phases F2–F5): real PixivFlow runtime
+installation/bundling, auto-update, and one-click deployment — the WebUI
+integration and release pipelines come after the backend is proven manageable
+from the desktop.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan (F0 → F5).
 
