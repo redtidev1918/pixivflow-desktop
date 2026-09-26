@@ -103,6 +103,10 @@ PixivFlow  ──►  pixivflow-webui  ──►  pixivflow-desktop
                         └── releasegraph 统一管理版本与发布
 ```
 
+上游是 [PixivFlow](https://github.com/redtidev1918/PixivFlow)（运行时与业务逻辑）与
+[pixivflow-webui](https://github.com/redtidev1918/pixivflow-webui)（浏览器界面），本仓库只负责
+把它们打包成原生应用并管理启动、守护与升级。
+
 [releasegraph](https://github.com/redtidev1918/releasegraph) 统一管理生态内各仓库的版本关系与发布流水线。本仓库的 [`desktop-manifest.json`](desktop-manifest.json) 是**组件版本锁**（当前 `pixivflow` / `pixivflow-webui` 各锁一个版本），构建时按它取上游产物；未来也由它驱动桌面的自动升级。本仓库在发布图中的位置与依赖边见 [生态关系](docs/RELATIONSHIP.md)。
 
 ## 开发

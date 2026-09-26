@@ -103,6 +103,10 @@ PixivFlow  ──►  pixivflow-webui  ──►  pixivflow-desktop
                         └── releasegraph manages versions and releases
 ```
 
+Upstream is [PixivFlow](https://github.com/redtidev1918/PixivFlow) (runtime and business logic)
+and [pixivflow-webui](https://github.com/redtidev1918/pixivflow-webui) (browser UI); this
+repository only packages them into a native app and manages launch, supervision and upgrades.
+
 [releasegraph](https://github.com/redtidev1918/releasegraph) drives version relationships and release pipelines across the ecosystem. This repo's [`desktop-manifest.json`](desktop-manifest.json) is the **component version lock** (currently one version each for `pixivflow` and `pixivflow-webui`) that the build reads to acquire upstream artifacts — and that will drive the desktop's automatic upgrades. See [relationship](docs/RELATIONSHIP.md).
 
 ## Development
