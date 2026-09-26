@@ -2,7 +2,7 @@
 
 **Language / 语言:** [中文](/) · English
 
-> **The native desktop build of [PixivFlow](https://github.com/redtidev1918/PixivFlow), for Windows / macOS / Linux.**
+> **The native desktop build of [PixivFlow](https://github.com/redtidev1918/PixivFlow), bundling the [pixivflow-webui](https://github.com/redtidev1918/pixivflow-webui) interface, for Windows / macOS / Linux.**
 
 PixivFlow Desktop packages the PixivFlow runtime together with its WebUI into a native app you just double-click: nothing else has to be installed, and no server has to be started. The desktop layer only launches, supervises and bundles the local runtime; **all business logic stays in upstream PixivFlow**.
 

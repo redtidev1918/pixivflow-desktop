@@ -2,7 +2,7 @@
 
 **语言 / Language:** 中文 · [English](/en/)
 
-> **基于 [PixivFlow](https://github.com/redtidev1918/PixivFlow) 的原生桌面版，支持 Windows / macOS / Linux。**
+> **基于 [PixivFlow](https://github.com/redtidev1918/PixivFlow) 的原生桌面版，内置 [pixivflow-webui](https://github.com/redtidev1918/pixivflow-webui) 界面，支持 Windows / macOS / Linux。**
 
 PixivFlow Desktop 把 PixivFlow 运行时和它的 WebUI 一起打包成一个**双击即用**的原生应用：装完不用另外装 Node，也不用自己起服务。桌面端只负责启动、守护与打包本地运行时，**业务逻辑全部留在上游 PixivFlow**。
 
