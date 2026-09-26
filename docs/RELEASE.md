@@ -82,8 +82,26 @@ Known limits, deliberately tracked rather than hidden:
 heading (see that directory's README). `release.notes.language: "zh"` in the
 policy makes the engine use them instead of the English commit lines, and the
 `release-metadata` CI job refuses a release PR whose notes are missing or not
-Chinese. The download page workflow is not wired up yet, because this repo has no
-docs site — the GitHub Release is the download surface.
+Chinese.
+
+## Docs site after a release
+
+The policy's `release.postRelease` runs two workflows once the release is
+published, both required:
+
+1. `update-download-page.yml` (`inputs: {tag: "{{tag}}", deploy-docs: "false"}`)
+   — regenerates `docs/download.md` and `docs/en/download.md` from the new
+   release via `.github/scripts/update_download_page.py`, using
+   `.github/scripts/download-page.json` and the `docs/download-preview.md`
+   snippet, then commits the refresh.
+2. `docs.yml` — redeploys https://redtidev1918.github.io/pixivflow-desktop/
+   (Pages source: GitHub Actions).
+
+So the published docs always describe the newest release; a failed or missing
+download page is a release failure, not a cosmetic issue. Neither the download
+pages nor the managed files (`docs/index.html`, `docs/assets/vendor/`, the two
+workflows and the update script) are hand-edited — regenerate them with
+`python3 docsite.py update` / `python3 docsite.py check`.
 
 ## Component version lock
 
