@@ -6,45 +6,76 @@ rewrite of upstream PixivFlow / webui.
 
 | Phase | Theme | Scope |
 |---|---|---|
-| **Phase 0 — Foundation** ✅ *(current)* | Repository skeleton | repository structure · documentation · `desktop-manifest.json` config/version contracts |
-| **Phase 1 — Shell MVP** ⬜ | First runnable app | Tauri window · frontend shell |
-| **Phase 2 — Backend integration** ⬜ | Lifecycle | `BackendManager` · start · stop · health check |
-| **Phase 3 — Packaging** ⬜ | Distribution | Windows installer · macOS dmg · Linux AppImage |
-| **Phase 4 — Update system** ⬜ | Updates | Tauri updater |
-| **Phase 5 — Releasegraph integration** ⬜ | Fleet automation | dependency graph · automated update PR |
+| **Phase 0 — Foundation** ✅ | Repository skeleton | structure · docs · `desktop-manifest.json` / `desktop-config.json` contracts |
+| **Phase 1 — Shell MVP** ✅ *(current)* | First runnable app | Tauri 2 window · frontend status shell · `BackendManager` (start/stop/restart/health) · config system · single-instance · file logging |
+| **Phase 2 — Real backend integration** ⬜ | Lifecycle | download backend release · bundle webui dist · `STATIC_PATH` · run the real PixivFlow locally |
+| **Phase 3 — UX** ⬜ | Experience | settings page · log viewer · remote mode · tray icon |
+| **Phase 4 — Distribution** ⬜ | Packaging | GitHub Actions · Windows .exe · macOS .dmg · Linux AppImage |
+| **Phase 5 — Releasegraph** ⬜ | Fleet automation | `desktop-manifest.json` version lock · automated update PR · auto Desktop release |
 
-## Phase 0 — Foundation ✅ (current)
+## Phase 0 — Foundation ✅
 
 - Repository structure.
 - Documentation.
 - `desktop-manifest.json` version-lock contract.
+- `desktop-config.example.json` — the `{mode, backend, dirs, remote}` contract.
 
-Nothing is runnable yet — no Tauri project, no Rust, no business logic.
+## Phase 1 — Shell MVP ✅ (current)
 
-## Phase 1 — Shell MVP ⬜
+Delivered and verified in this repo (Tauri 2.x):
 
-- Tauri main window.
-- Frontend shell.
+- **Window** — main webview, launched via Vite dev server.
+- **Frontend shell** — vanilla JS status page (`src/frontend/`), states:
+  `starting / running / stopped / error / unknown`, driven by `invoke` + a
+  `backend-status` event + a 1s poll.
+- **`BackendManager`** (`src-tauri/src/backend/manager.rs`):
+  `start()` idempotent (refuses if port taken) · `stop()` graceful SIGTERM +
+  wait, never `kill -9` · `restart()` · `health_check()` on `/api/health`.
+- **Config system** (`src-tauri/src/config.rs`) — reads `desktop-config.json`
+  from the platform app-config dir; auto-creates a default; surfaces parse errors.
+- **Commands** (`commands.rs`): `get_status` / `get_config` / `config_path` /
+  `start_backend` / `stop_backend` / `restart_backend`.
+- **Single instance** — `tauri-plugin-single-instance`.
+- **Logs** — `logs/desktop.log` records startup, backend lifecycle and errors.
+- **Graceful shutdown** — closing the window stops the backend.
+- **Integration test** `tests/backend_test.rs` proves the full
+  `start → health → graceful-stop → double-stop no-op` contract headlessly.
 
-## Phase 2 — Backend integration ⬜
+> F1 ships a **mock backend** (`src-tauri/resources/mock-backend.mjs`) as the
+> health-probe stand-in. The backend command is configurable via
+> `backend.command` and is replaced by the real PixivFlow in Phase 2.
 
-- `BackendManager`.
-- `start` / `stop` / health check.
+### Acceptance checklist (F1)
 
-## Phase 3 — Packaging ⬜
+- [x] `cargo tauri dev` opens a window.
+- [x] Backend auto-start simulated (mock) on configurable port → `starting` → `running`.
+- [x] Health detected (`/api/health` → 200).
+- [x] Closing the window stops the backend gracefully.
+
+## Phase 2 — Real backend integration ⬜
+
+- Acquire the real backend (downloaded release or local build).
+- Bundle the webui frontend dist and serve it (`STATIC_PATH`).
+- Run real PixivFlow locally via `backend.command` (no Node/Docker requirement for the end user).
+
+## Phase 3 — UX ⬜
+
+- Settings page (`remote` mode, data/download/log dirs).
+- Log viewer.
+- Tray icon + minimize-to-tray.
+
+## Phase 4 — Distribution ⬜
 
 - Windows installer (.exe).
-- macOS dmg.
+- macOS .dmg.
 - Linux AppImage.
+- GitHub Actions release workflow.
 
-## Phase 4 — Update system ⬜
-
-- Tauri updater (GitHub Releases).
-
-## Phase 5 — Releasegraph integration ⬜
+## Phase 5 — Releasegraph ⬜
 
 - Add to the releasegraph dependency graph.
-- Automated update PR when an upstream component releases.
+- `desktop-manifest.json` version lock → automated update PR when an upstream
+  component releases.
 
 ## Design constraints (non-negotiable)
 

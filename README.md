@@ -21,6 +21,14 @@ It is:
 Business logic stays in upstream PixivFlow. The desktop only launches, supervises,
 contains and updates it.
 
+## Status (F1 — Shell MVP)
+
+Runnable Tauri 2 shell: launches a window, reads `desktop-config.json`, starts the
+backend, health-checks `/api/health` and stops it gracefully on window close.
+F1 ships a bundled **mock backend** as the health stand-in; the real PixivFlow
+integration is Phase 2. See [docs/ROADMAP.md](/docs/ROADMAP.md) for the full
+phase plan and [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
+
 ## Architecture
 
 ```

@@ -17,4 +17,7 @@ src-tauri/resources/webui/*
 .DS_Store
 Thumbs.db
 .idea/
+
 .vscode/
+
+dist/

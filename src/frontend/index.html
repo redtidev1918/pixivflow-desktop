@@ -1,32 +1,45 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PixivFlow Desktop</title>
-  <style>
-    :root { color-scheme: light dark; }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: #f5f7fb; color: #1c2430;
-    }
-    .card {
-      max-width: 420px; margin: 24px; padding: 36px 28px; text-align: center;
-      background: #fff; border-radius: 14px;
-      box-shadow: 0 10px 34px rgba(15, 23, 42, .10);
-    }
-    h1 { font-size: 20px; margin: 0 0 8px; }
-    p  { font-size: 13.5px; color: #5b6472; line-height: 1.5; margin: 0; }
-    code { background: #eef1f8; padding: 1px 6px; border-radius: 6px; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>PixivFlow Desktop</h1>
-    <p>静态壳页（F0 骨架占位）。真 UI 由内置 <code>pixivflow-webui</code>
-      经本地 PixivFlow 后端同源提供，将在 Phase 1–2 接入。</p>
-  </div>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PixivFlow Desktop</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="titlebar">
+        <span class="logo">◧</span>
+        <h1>PixivFlow Desktop</h1>
+        <span id="mode" class="mode">local</span>
+      </header>
+
+      <section class="card status-card">
+        <div class="status-row">
+          <span id="status-dot" class="dot dot-unknown"></span>
+          <span id="status-label" class="status-label">Starting…</span>
+        </div>
+        <p id="status-detail" class="detail">正在加载配置…</p>
+      </section>
+
+      <section class="card meta">
+        <div class="meta-row"><span>后端端口</span><code id="meta-port">—</code></div>
+        <div class="meta-row"><span>进程 PID</span><code id="meta-pid">—</code></div>
+        <div class="meta-row"><span>配置模式</span><code id="meta-mode">—</code></div>
+        <div class="meta-row"><span>配置文件</span><code id="meta-config">—</code></div>
+      </section>
+
+      <section class="card actions">
+        <button id="btn-start" class="btn primary">启动 Backend</button>
+        <button id="btn-stop" class="btn">停止 Backend</button>
+        <button id="btn-restart" class="btn">重启</button>
+      </section>
+
+      <section class="card log-card">
+        <h2>运行日志 <span class="hint">logs/desktop.log</span></h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
 </html>
