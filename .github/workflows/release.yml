@@ -36,3 +36,18 @@ jobs:
       force: ${{ inputs.force || false }}
       repair: ${{ github.event_name == 'pull_request' || inputs.repair || false }}
       stage: ${{ inputs.stage || 'all' }}
+    # Deliberately NOT `secrets: inherit`: the engine only declares these, and a
+    # repository token that happens to sit here (PROFILE_REPO_TOKEN) has no
+    # business reaching it. Both are optional — release-please falls back to the
+    # default `github.token` when RELEASE_PLEASE_TOKEN is absent, and adding that
+    # secret later needs no edit here.
+    #
+    # NOTE on held runs: a release PR opened by `github-actions[bot]` can come
+    # back `action_required`. On this repository it does not (`can_approve_pull_
+    # request_reviews: true`), and skipping bot PRs would delete the release
+    # dry run that AGENTS.md documents, so the guard stays out. If it ever
+    # regresses, add the fleet reference guard:
+    #   if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'github-actions[bot]'
+    secrets:
+      RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
