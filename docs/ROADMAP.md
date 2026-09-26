@@ -204,6 +204,15 @@ in F4.1 below.)
 - **Orphan adoption** — a backend left over from a force-quit/crash is adopted
   (port open + `/api/health` 200 + listener command contains `pixivflow`) instead
   of failing with "端口已被占用"; `stop()` SIGTERMs it by pid.
+- **Build-time runtime guard** — `scripts/check-runtime.mjs` runs as `postbuild`
+  (and standalone as `npm run test:runtime`) and **fails the build** when
+  `resources/runtime/pixivflow` is still the committed dev stand-in
+  (`0.0.0-dev` / a `dev-backend` entry) or when the manifest's `command` /
+  `args` entries do not exist as files: the manifest is a promise, and the
+  committed default *is* the stand-in, so a plain `tauri build` used to ship an
+  app that answered `/api/health` with the fake backend.
+  `PIXIVFLOW_ALLOW_DEV_RUNTIME=1` downgrades it to an explicit
+  "not releasable" warning for intentional dev builds.
 - **Verified** — `PixivFlow Desktop.app` bundles `runtime/pixivflow/{node,dist,
   node_modules,…}` + `webui/dist`; launched from the bundle the log reads
   `backend resolved: source=bundled exe=…/runtime/pixivflow/./node`, `health OK
