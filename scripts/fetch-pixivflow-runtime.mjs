@@ -86,19 +86,75 @@ function readdirHas(dir, name) {
   try { return readdirSync(dir).includes(name); } catch { return false; }
 }
 
-function installProdDeps(pkgJsonPath, lockPath, destDir) {
+// Top-level package names inside a tree of `node_modules`, scoped names kept whole.
+function packageNamesIn(nodeModulesDir) {
+  const names = [];
+  for (const entry of readdirSync(nodeModulesDir)) {
+    if (entry === '.bin' || entry === '.package-lock.json') continue;
+    if (entry.startsWith('@')) {
+      let subs = [];
+      try { subs = readdirSync(join(nodeModulesDir, entry)); } catch { continue; }
+      for (const sub of subs) names.push(`${entry}/${sub}`);
+    } else {
+      names.push(entry);
+    }
+  }
+  return names;
+}
+
+function installProdDeps(pkgJsonPath, lockPath, destDir, packagedNodeModules) {
+  // `pixivflow` declares `bundleDependencies: ["@redtidev/pixiv-client"]`, and
+  // that workspace package is deliberately not on the registry: resolving the
+  // published manifest against the registry alone fails with
+  // `@redtidev/pixiv-client@0.1.0 is not in this registry` (404). The tarball
+  // ships that bundle inside its own `node_modules`, so the package's bundled
+  // set is taken from the tarball and everything else from the registry.
+  const bundled = packagedNodeModules && existsSync(packagedNodeModules)
+    ? packageNamesIn(packagedNodeModules)
+    : [];
+
   // Assemble prod-only node_modules in an isolated staging dir.
   const stage = mkdtempSync(join(tmpdir(), 'pfx-prod-'));
   try {
-    cpSync(pkgJsonPath, join(stage, 'package.json'));
-    if (lockPath && existsSync(lockPath)) {
+    const stagedPkg = readJson(pkgJsonPath);
+    const dropped = [];
+    if (bundled.length) {
+      stagedPkg.dependencies = { ...(stagedPkg.dependencies ?? {}) };
+      for (const name of bundled) {
+        if (stagedPkg.dependencies[name]) {
+          delete stagedPkg.dependencies[name];
+          dropped.push(name);
+        }
+      }
+      writeFileSync(join(stage, 'package.json'), JSON.stringify(stagedPkg, null, 2) + '\n');
+      if (dropped.length) log(`bundled by the tarball, taken from it: ${dropped.join(', ')}`);
+    } else {
+      cpSync(pkgJsonPath, join(stage, 'package.json'));
+    }
+
+    const haveLock = Boolean(lockPath) && existsSync(lockPath) && !dropped.length;
+    if (haveLock) {
       cpSync(lockPath, join(stage, 'package-lock.json'));
     }
-    run(`npm ci --omit=dev --no-audit --no-fund`, { cwd: stage });
+    // `npm ci` requires a lockfile and an unmodified manifest. The published
+    // tarball ships neither, so the npm-source path (the CI path — a runner has
+    // no sibling checkout to read a lock from) installs from the manifest.
+    run(
+      haveLock
+        ? 'npm ci --omit=dev --no-audit --no-fund'
+        : 'npm install --omit=dev --no-audit --no-fund --no-package-lock',
+      { cwd: stage },
+    );
     // Replace any previous tree instead of merging into it, so a stale entry
     // from an earlier fetch can never survive into the next bundle.
     rmSync(join(destDir, 'node_modules'), { recursive: true, force: true });
     cpSync(join(stage, 'node_modules'), join(destDir, 'node_modules'), { recursive: true });
+    if (bundled.length) {
+      // Overlay the publisher's bundled set (it carries the unpublished package
+      // and its own transitive deps).
+      cpSync(packagedNodeModules, join(destDir, 'node_modules'), { recursive: true });
+      log(`bundled set overlaid from the tarball: ${bundled.length} package(s)`);
+    }
     materializeSymlinks(join(destDir, 'node_modules'));
     log(`node_modules copied (prod-only) -> ${join(destDir, 'node_modules')}`);
   } finally {
@@ -229,7 +285,12 @@ cpSync(join(pkgDir, 'package.json'), join(workDir, 'package.json'));
 writeFileSync(join(workDir, 'VERSION'), version + '\n');
 writeFileSync(join(workDir, 'runtime-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 
-installProdDeps(join(pkgDir, 'package.json'), join(pkgDir, 'package-lock.json'), workDir);
+installProdDeps(
+  join(pkgDir, 'package.json'),
+  join(pkgDir, 'package-lock.json'),
+  workDir,
+  src.kind === 'npm' ? join(pkgDir, 'node_modules') : null,
+);
 
 // restore workspace-local deps (local checkouts only) so dist is self-contained
 const sourceRoot = src.kind === 'dir' ? src.path : null;

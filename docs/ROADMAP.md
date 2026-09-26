@@ -229,19 +229,25 @@ in F4.1 below.)
   assets (`PixivFlow-runtime-<platform>.tar.zst` / `.zip`) instead of git.
 - **4.3 RuntimeManager** — a separate module for runtime discovery / download /
   checksum verification / install / upgrade; `BackendManager` stays lifecycle-only.
-- **4.4 CI release matrix** — one tag → macOS (.dmg) / Windows (.exe) / Linux
-  (AppImage, .deb) via `release.yml`.
+- ✅ **4.4 CI release matrix** — one tag → macOS (.dmg) / Windows (.exe) / Linux
+  (.deb, AppImage) through `.release-policy.yml` + `scripts/build-release` +
+  `.github/workflows/release.yml`; see `docs/RELEASE.md`.
+  Honest limits: installers are unsigned, the macOS leg currently produces the
+  **arm64** dmg only (the bundled runtime carries the runner's own `node`, so an
+  Intel dmg needs 4.2/4.3), and the Windows/Linux legs have never been exercised
+  — their first proof is a PR dry run.
 - **4.5 Naming & branding** — bundle id `com.redtidev1918.pixivflow.desktop`,
   window title `PixivFlow Desktop`, later a `pixivflow-desktop doctor` CLI.
 - **4.6 Doctor / diagnostics** — extend `backend_doctor` toward
   `flutter doctor`-style checks (resources, runtime, port, health, WebUI,
   permissions, network).
-- macOS .dmg / Windows installer / Linux AppImage still to be produced locally.
 
-## Phase 5 — Releasegraph ⬜
+## Phase 5 — Releasegraph 🟡
 
-- Add to the releasegraph dependency graph.
-- `desktop-manifest.json` version lock → automated update PR when an upstream
+- ✅ Added to the releasegraph dependency graph as a node
+  (`release-control/release-graph.yml`) with evidence-backed edges from
+  `PixivFlow` and `pixivflow-webui`.
+- ⬜ `desktop-manifest.json` version lock → automated update PR when an upstream
   component releases.
 
 ## Design constraints (non-negotiable)

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  launcher:
+    name: launcher + frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The build smoke test needs a built dist/. CI is not the release build —
+      # that one fetches the real runtime in scripts/build-release — so the
+      # committed dev stand-in is accepted here, which downgrades check-runtime
+      # from a failure to a warning.
+      - run: npm run build
+        env:
+          PIXIVFLOW_ALLOW_DEV_RUNTIME: "1"
+      - run: npm test
+
+  host:
+    name: host (Tauri)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
+        with:
+          node-version: 22
+          cache: npm
+      # No rustfmt gate: the toolchain on the runner is not guaranteed to carry
+      # the component, and formatting is a human decision here.
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  release-metadata:
+    name: release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
+        with:
+          node-version: 22
+          cache: npm
+      - name: The three version files agree
+        run: node scripts/check-version-sync.mjs
+      - name: The release notes are present and in Chinese
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./.release-please-manifest.json')['.']")"
+          notes=".github/release-notes/${version}.md"
+          echo "manifest version: ${version}"
+          if [ ! -f "${notes}" ]; then
+            echo "::error::${notes} is missing. release-please has already bumped the manifest to ${version}, so this release needs its Chinese notes in the same pull request."
+            exit 1
+          fi
+          grep -q '本次更新' "${notes}" || {
+            echo "::error::${notes} must contain the 本次更新 heading."
+            exit 1
+          }
+          grep -qP '[\x{4e00}-\x{9fff}]' "${notes}" || {
+            echo "::error::${notes} must actually be written in Chinese."
+            exit 1
+          }
+      - name: The shipped asset names keep the v-prefixed form
+        run: |
+          set -euo pipefail
+          # Exactly one shipped name per platform, always the v-prefixed form:
+          # any `PixivFlow Desktop` / bare-version / non-v-prefixed variant would
+          # break the download page and releasegraph's asset contract.
+          python3 - <<'PY'
+          import json, re, sys
+          policy = json.load(open('.release-policy.yml'))
+          required = policy.get('assets', {}).get('required', [])
+          assert required, 'the policy declares no required assets'
+          for pattern in required:
+              assert pattern.startswith('PixivFlow-Desktop-v'), f'{pattern} is not v-prefixed'
+              assert ' ' not in pattern, f'{pattern} contains a space; use the dashed product slug'
+          print('asset contract:', ', '.join(required))
+          PY

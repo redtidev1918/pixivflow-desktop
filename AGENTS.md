@@ -410,8 +410,8 @@ manifest dir → CWD-relative dev path, so the same code works in dev and in the
 `.app` / `.AppImage`. The committed default stays the dev stand-in
 (`dev-backend.mjs`). Checksums / download / auto-update are design-only.
 Remaining F4 per `docs/ROADMAP.md`: runtime release assets (4.2), `RuntimeManager`
-(4.3), CI release matrix (4.4), branding (4.5), doctor expansion (4.6), and the
-DMG / Windows / Linux installers.
+(4.3), branding (4.5) and doctor expansion (4.6). The CI release matrix (4.4)
+landed with the releasegraph onboarding — see "Release pipeline".
 
 Not currently implemented (do not add without an explicit decision):
 
@@ -477,6 +477,30 @@ through `window.pixivflowHost` and its result in the desktop log.
 
 Report in this order: what changed, what was verified (command → result), which
 docs moved, the commit hash, and whether it was pushed.
+
+## Release pipeline (releasegraph)
+
+This repo does not release itself: `redtidev1918/releasegraph` is the release
+authority for the fleet. `.release-policy.yml` declares the contract,
+`.github/workflows/release.yml` is a thin caller, and `scripts/build-release` is
+the only build path allowed to produce shipped installers.
+
+- **Never hand-edit a version, tag, or Release.** Conventional Commits on `main`
+  → release-please opens `chore(main): release x.y.z` → merging that PR *is* the
+  release. `fix:` = patch, `feat:` = minor, `feat!:` = major.
+- **One version, three files.** `package.json`, `src-tauri/tauri.conf.json` and
+  `src-tauri/Cargo.toml` must agree (`npm run test:version`); the release PR
+  updates all three via `extra-files`, and `scripts/build-release` re-aligns them
+  from `RELEASE_VERSION` if drift still slips through.
+- **Both halves of the product are pinned in `desktop-manifest.json`.** The
+  runtime is fetched from the published `pixivflow` package and the WebUI is
+  composed at its tag; `scripts/build-release` refuses to ship the committed dev
+  stand-in or the placeholder WebUI page.
+- **A pull request is a full dry run** (the caller forces `dry_run`/`repair` on
+  PRs), so asset names and every matrix leg are exercised before any publish.
+- **Never add release logic here** — publishing, tagging and retention belong to
+  the engine. A repo-local `scripts/build-release` that only compiles into
+  `dist/release/` is the sanctioned adapter.
 
 ## Cross-repo sync (upstream follows downstream)
 

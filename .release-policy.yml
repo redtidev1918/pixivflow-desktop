@@ -1,0 +1,68 @@
+{
+  "kind": "binary",
+  "versioning": {
+    "mode": "release-please"
+  },
+  "build": {
+    "test": "npm ci && npm run test:frontend && npm run test:version",
+    "matrix": [
+      {
+        "runner": "macos-latest",
+        "command": "scripts/build-release",
+        "version_check": "ls dist/release/PixivFlow-Desktop-v${RELEASE_VERSION}-macos-*.dmg >/dev/null"
+      },
+      {
+        "runner": "windows-2022",
+        "command": "scripts/build-release",
+        "version_check": "ls dist/release/PixivFlow-Desktop-v${RELEASE_VERSION}-windows-*-setup.exe >/dev/null"
+      },
+      {
+        "runner": "ubuntu-latest",
+        "command": "scripts/build-release",
+        "version_check": "ls dist/release/PixivFlow-Desktop-v${RELEASE_VERSION}-linux-*.deb >/dev/null"
+      }
+    ]
+  },
+  "assets": {
+    "required": [
+      "PixivFlow-Desktop-v*-macos-*.dmg",
+      "PixivFlow-Desktop-v*-windows-*-setup.exe",
+      "PixivFlow-Desktop-v*-linux-*.deb"
+    ],
+    "optional": [
+      "PixivFlow-Desktop-v*-linux-*.AppImage"
+    ]
+  },
+  "registries": {
+    "github": {
+      "required": true
+    }
+  },
+  "release": {
+    "notes": {
+      "language": "zh"
+    }
+  },
+  "retention": {
+    "stable": 1,
+    "prerelease": 1,
+    "failed_draft": 2,
+    "pruneStable": true
+  },
+  "checksums": true,
+  "sbom": false,
+  "repository": {
+    "git": {
+      "productionOperations": {
+        "base": "default",
+        "branches": [
+          "chore/cutover-*",
+          "ops/*",
+          "release/*",
+          "hotfix/*"
+        ],
+        "requireLatestBase": true
+      }
+    }
+  }
+}

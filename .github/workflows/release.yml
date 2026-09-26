@@ -1,0 +1,38 @@
+name: Release
+
+# The fleet release entry point. Everything that decides *whether* a release is
+# due, builds it, publishes it and repairs a half-finished one lives in
+# redtidev1918/releasegraph; this file is only the per-repository delegate plus
+# the triggers. The asset contract (what ships, under which name) is
+# `.release-policy.yml`; the per-runner build is `scripts/build-release`.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "47 * * * *"
+  workflow_dispatch:
+    inputs:
+      version: {description: "Existing version; blank reads the manifest", required: false, type: string}
+      dry_run: {description: "Build and validate without publishing", required: false, default: false, type: boolean}
+      force: {description: "Rerun a healthy version", required: false, default: false, type: boolean}
+      repair: {description: "Repair the current incomplete version", required: false, default: false, type: boolean}
+      stage: {description: "Recovery stage label", required: false, default: all, type: string}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  packages: write
+  actions: write # post-release workflow_dispatch
+  id-token: write
+
+jobs:
+  release:
+    uses: redtidev1918/releasegraph/.github/workflows/reusable-release.yml@aa7eec4c6e75dcb403fb76932096c77a46ead5e7 # ReleaseGraph aa7eec4 (merged #89: repair incomplete public releases)
+    with:
+      version: ${{ inputs.version || '' }}
+      dry_run: ${{ github.event_name == 'pull_request' || inputs.dry_run || false }}
+      force: ${{ inputs.force || false }}
+      repair: ${{ github.event_name == 'pull_request' || inputs.repair || false }}
+      stage: ${{ inputs.stage || 'all' }}

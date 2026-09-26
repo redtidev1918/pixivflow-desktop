@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+#
+# Builds the installers releasegraph publishes for one release.
+#
+# releasegraph runs this script once per runner in the `build.matrix` of
+# `.release-policy.yml` with:
+#
+#   RELEASE_VERSION  the version being released (e.g. 0.3.0)
+#   RELEASE_TAG      the v-prefixed tag (e.g. v0.3.0)
+#   DRY_RUN          "true" when the run must build and validate but not publish
+#   RUNNER_OS        Linux | macOS | Windows
+#
+# and always invokes it through `bash -euo pipefail -c`, so this file may assume
+# a bash shell (git-bash on Windows) and must leave one artifact per platform
+# under `dist/release/`. The names below are the asset contract in
+# `.release-policy.yml`: exactly one shipped name per platform, always the
+# v-prefixed form. The engine installs Node 22 (because `package.json` exists)
+# but no Rust toolchain and no Linux system libraries — this script provides
+# both.
+set -euo pipefail
+
+: "${RELEASE_VERSION:?RELEASE_VERSION is required}"
+DRY_RUN="${DRY_RUN:-false}"
+RUNNER_OS="${RUNNER_OS:-$(uname -s)}"
+# GitHub sets RUNNER_OS to Linux/macOS/Windows; accept the local `uname -s`
+# spellings too, so a developer can run the very same command.
+case "${RUNNER_OS}" in
+  Darwin) RUNNER_OS="macOS" ;;
+  MINGW*|MSYS*|CYGWIN*) RUNNER_OS="Windows" ;;
+esac
+PRODUCT="PixivFlow Desktop"
+SLUG="PixivFlow-Desktop"
+
+rm -rf dist/release
+mkdir -p dist/release
+
+echo "building ${PRODUCT} v${RELEASE_VERSION} for ${RUNNER_OS} (dry-run=${DRY_RUN})"
+
+retry() {
+  local attempt=1
+  until "$@"; do
+    if [ "${attempt}" -ge 5 ]; then return 1; fi
+    echo "::warning::$* failed (attempt ${attempt}/5), retrying in 15s"
+    attempt=$((attempt + 1))
+    sleep 15
+  done
+}
+
+install_linux_dependencies() {
+  # Tauri's Linux target links the WebKitGTK stack, which no runner image ships.
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends \
+    libwebkit2gtk-4.1-dev \
+    libappindicator3-dev \
+    librsvg2-dev \
+    patchelf
+}
+
+ensure_rust() {
+  if command -v cargo >/dev/null 2>&1; then
+    cargo --version
+    return
+  fi
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+  # shellcheck disable=SC1091
+  . "${HOME}/.cargo/env"
+  cargo --version
+}
+
+publish() { # publish <built artifact> <canonical release name>
+  test -f "$1" || {
+    echo "::error::expected bundle missing: $1"
+    return 1
+  }
+  # `npm run build` (vite) empties dist/ while building the launcher, so the
+  # release directory is recreated here — after every build, before the copy.
+  mkdir -p dist/release
+  cp "$1" "dist/release/$2"
+  echo "published $2"
+}
+
+case "${RUNNER_OS}" in
+  Linux) install_linux_dependencies ;;
+  macOS | Windows) ;;
+  *)
+    echo "::error::unsupported RUNNER_OS: ${RUNNER_OS}"
+    exit 1
+    ;;
+esac
+
+ensure_rust
+retry npm ci
+
+# The installer must never disagree with the release it is published under, so a
+# drifted committed version is corrected here rather than shipped. release-please
+# normally keeps these in sync through `extra-files`.
+declared="$(node -p "require('./package.json').version")"
+if [ "${declared}" != "${RELEASE_VERSION}" ]; then
+  echo "::warning::package.json declares ${declared} but this release is ${RELEASE_VERSION}; aligning the version files before building"
+  node scripts/set-release-version.mjs "${RELEASE_VERSION}"
+fi
+
+# Both halves of the bundled product come from the versions pinned in
+# desktop-manifest.json, so a release never ships "whatever was latest":
+#   * the backend runtime from the published npm package (a CI runner has no
+#     sibling PixivFlow checkout to auto-discover),
+#   * the WebUI frontend from its release tag, because the runtime package ships
+#     only the WebUI *server* and the committed index.html is a placeholder.
+# `npm run build` runs `postbuild`, whose `scripts/check-runtime.mjs` refuses the
+# committed dev stand-in, so both steps must land before it.
+PIXIVFLOW_VERSION="$(node -p "require('./desktop-manifest.json').components.pixivflow.version")"
+WEBUI_VERSION="$(node -p "require('./desktop-manifest.json').components['pixivflow-webui'].version")"
+node scripts/fetch-pixivflow-runtime.mjs --source "pixivflow@${PIXIVFLOW_VERSION}"
+node scripts/fetch-pixivflow-webui.mjs --version "${WEBUI_VERSION}"
+npm run build
+
+bundle_dir="src-tauri/target/release/bundle"
+
+case "${RUNNER_OS}" in
+  macOS)
+    npm run tauri -- build --bundles app,dmg
+    case "$(uname -m)" in
+      arm64) arch="arm64" ;;
+      *) arch="x64" ;;
+    esac
+    publish "$(ls "${bundle_dir}/dmg/"*.dmg | head -1)" \
+      "${SLUG}-v${RELEASE_VERSION}-macos-${arch}.dmg"
+    ;;
+  Windows)
+    npm run tauri -- build --bundles nsis
+    publish "$(ls "${bundle_dir}/nsis/"*setup.exe | head -1)" \
+      "${SLUG}-v${RELEASE_VERSION}-windows-x64-setup.exe"
+    ;;
+  Linux)
+    npm run tauri -- build --bundles deb
+    publish "$(ls "${bundle_dir}/deb/"*.deb | head -1)" \
+      "${SLUG}-v${RELEASE_VERSION}-linux-amd64.deb"
+    # AppImage needs FUSE-side tooling that a headless runner may not support;
+    # the .deb above is the shipped Linux artifact and this stays optional in
+    # the policy for exactly that reason.
+    if npm run tauri -- build --bundles appimage; then
+      publish "$(ls "${bundle_dir}/appimage/"*.AppImage | head -1)" \
+        "${SLUG}-v${RELEASE_VERSION}-linux-amd64.AppImage"
+    else
+      echo "::warning::AppImage bundling failed on this runner; shipping the .deb only"
+    fi
+    ;;
+esac
+
+echo "dist/release for ${RUNNER_OS}:"
+ls -l dist/release

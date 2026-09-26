@@ -45,3 +45,7 @@ dist/
 !src-tauri/resources/webui/dist/index.html
 # the real WebUI bundle (assets/) is a build product — only the placeholder above
 src-tauri/resources/webui/dist/assets/
+
+# Runtime data written next to the app when the bundled backend is started from
+# a checkout (the installed app uses the per-user app data directory instead).
+/config/

@@ -147,14 +147,38 @@ standalone `node` — plus the built WebUI dist, keeps its data in the per-user
 app data directory, opens the WebUI automatically once health is confirmed, and
 adopts a backend orphaned by a crash instead of failing on a busy port.
 
-Windows / Linux installers, .dmg packaging and CI release builds are still
-ahead — see `docs/ROADMAP.md`.
+The `.dmg` packaging and the CI release builds landed with F4.4 (see *Releases*
+below); Windows / Linux installers are built by the same matrix but have not been
+exercised yet — see `docs/ROADMAP.md`.
 
 Still ahead (phases F2.3–F5): swapping the dev stand-in for the real release
 binary, auto-update, and one-click deployment — done after the bundled-manage
 story is proven from the desktop.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan (F0 → F5).
+
+## Releases
+
+Releases are automatic: this repository is a
+[ReleaseGraph](https://github.com/redtidev1918/releasegraph) node, so a
+Conventional Commit on `main` makes release-please open a
+`chore(main): release x.y.z` pull request, and **merging that pull request is the
+release** — the fleet engine tags it, builds every platform, checks the asset
+names, and publishes the GitHub Release. Nobody hand-edits a version or creates
+a tag. Open a pull request and the same pipeline runs as a full dry run.
+
+Each release produces per-platform installers under a canonical asset name:
+
+```
+PixivFlow-Desktop-v<version>-macos-<arm64|x64>.dmg
+PixivFlow-Desktop-v<version>-windows-x64-setup.exe
+PixivFlow-Desktop-v<version>-linux-amd64.deb            (+ .AppImage)
+```
+
+Today's honest limits: the installers are **unsigned**, the macOS leg currently
+builds the **arm64** dmg only (the bundled runtime carries the runner's own
+`node`), and the Windows/Linux legs have not been exercised yet — their first
+proof is a pull-request dry run. `docs/RELEASE.md` has the details.
 
 ## Documentation
 
