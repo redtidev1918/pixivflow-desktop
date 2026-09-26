@@ -78,7 +78,6 @@ publish() { # publish <built artifact> <canonical release name>
   cp "$1" "dist/release/$2"
   echo "published $2"
 }
-
 case "${RUNNER_OS}" in
   Linux) install_linux_dependencies ;;
   macOS | Windows) ;;
@@ -116,36 +115,57 @@ npm run build
 
 bundle_dir="src-tauri/target/release/bundle"
 
+# Phase 1 — build every bundle. Nothing is published yet: `tauri build` runs
+# `beforeBuildCommand` (`npm run build`, i.e. vite) and vite empties `dist/`,
+# which would delete an artifact published by an earlier invocation. That is
+# exactly what broke the Linux leg once: the optional AppImage attempt ran a
+# second `tauri build` after the `.deb` had been published and wiped
+# `dist/release/` on its way in.
+appimage_ok=0
 case "${RUNNER_OS}" in
   macOS)
     npm run tauri -- build --bundles app,dmg
     case "$(uname -m)" in
-      arm64) arch="arm64" ;;
-      *) arch="x64" ;;
+      arm64) mac_arch="arm64" ;;
+      *) mac_arch="x64" ;;
     esac
-    publish "$(ls "${bundle_dir}/dmg/"*.dmg | head -1)" \
-      "${SLUG}-v${RELEASE_VERSION}-macos-${arch}.dmg"
     ;;
   Windows)
     npm run tauri -- build --bundles nsis
-    publish "$(ls "${bundle_dir}/nsis/"*setup.exe | head -1)" \
-      "${SLUG}-v${RELEASE_VERSION}-windows-x64-setup.exe"
     ;;
   Linux)
     npm run tauri -- build --bundles deb
-    publish "$(ls "${bundle_dir}/deb/"*.deb | head -1)" \
-      "${SLUG}-v${RELEASE_VERSION}-linux-amd64.deb"
     # AppImage needs FUSE-side tooling that a headless runner may not support;
-    # the .deb above is the shipped Linux artifact and this stays optional in
-    # the policy for exactly that reason.
+    # the .deb above is the shipped Linux artifact and the AppImage stays
+    # optional in the policy for exactly that reason.
     if npm run tauri -- build --bundles appimage; then
-      publish "$(ls "${bundle_dir}/appimage/"*.AppImage | head -1)" \
-        "${SLUG}-v${RELEASE_VERSION}-linux-amd64.AppImage"
+      appimage_ok=1
     else
       echo "::warning::AppImage bundling failed on this runner; shipping the .deb only"
     fi
     ;;
 esac
 
+# Phase 2 — publish. The bundle files live under src-tauri/target/, outside the
+# dist/ that vite rewrites, so every artifact built above is still there.
+case "${RUNNER_OS}" in
+  macOS)
+    publish "$(ls "${bundle_dir}/dmg/"*.dmg | head -1)" \
+      "${SLUG}-v${RELEASE_VERSION}-macos-${mac_arch}.dmg"
+    ;;
+  Windows)
+    publish "$(ls "${bundle_dir}/nsis/"*setup.exe | head -1)" \
+      "${SLUG}-v${RELEASE_VERSION}-windows-x64-setup.exe"
+    ;;
+  Linux)
+    publish "$(ls "${bundle_dir}/deb/"*.deb | head -1)" \
+      "${SLUG}-v${RELEASE_VERSION}-linux-amd64.deb"
+    if [ "${appimage_ok}" = "1" ]; then
+      publish "$(ls "${bundle_dir}/appimage/"*.AppImage | head -1)" \
+        "${SLUG}-v${RELEASE_VERSION}-linux-amd64.AppImage"
+    fi
+    ;;
+esac
+
 echo "dist/release for ${RUNNER_OS}:"
-ls -l dist/release
+ls -l dist/release || true
