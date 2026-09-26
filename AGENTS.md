@@ -299,10 +299,23 @@ is (`GET /api/files/location`); it must never spawn a desktop program, because
 `browser → remote backend → xdg-open` is meaningless on a server and misleads
 the user about which machine opens.
 
-The direction of responsibility is therefore one-way: the WebUI resolves and
-confines the path through the backend, then asks the host to show it. The host
-command validates only what it can see locally (does the path exist) and must
-not re-derive, expand or interpret paths.
+The direction of responsibility is therefore one-way: the WebUI resolves the
+location through the backend, then asks the host to show it. That is not a reason
+for this layer to open whatever string arrives: the bridge is injected into a page
+served from `http://127.0.0.1:<port>/`, so an injected or compromised page would
+otherwise turn `reveal_path` into "open any path on this machine". This layer
+therefore re-confines before opening — canonicalise (a path whose tail is gone is
+resolved through its nearest existing ancestor, so a stale history row still works
+while `..` and symlinks cannot escape), then accept only paths under a configured
+download root: the data root's `downloads/`, the desktop config's `downloadDir`,
+and the `storage.illustrationDirectory` / `novelDirectory` / `downloadDirectory`
+values declared in `<data root>/config/*.json` and `$HOME/.pixivflow/config/*.json`
+(a relative config value resolves against the data root, which is the backend's
+CWD). Everything else is refused with a distinguishable reason —
+`REVEAL_FORBIDDEN` / `REVEAL_NOT_FOUND` / `REVEAL_UNAVAILABLE` / `FAILED`. It still
+never *re-derives* a path: nothing is invented, no configuration is written, and a
+refusal is never turned into a guess. The cross-repo contract is PixivFlow
+`docs/platform-contract.md` §4.7.
 
 - `reveal_path(path)` — "Show in Finder" semantics: a file is *selected* in its
   folder (`open -R` on macOS, `explorer /select,` on Windows, `xdg-open` on the
