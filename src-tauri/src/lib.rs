@@ -192,7 +192,7 @@ pub fn run() {
             commands::open_logs,
             commands::open_webui,
             commands::open_login_window,
-            commands::reveal_directory,
+            commands::reveal_path,
             commands::export_diagnostics,
             commands::log_frontend,
             i18n::get_locale,

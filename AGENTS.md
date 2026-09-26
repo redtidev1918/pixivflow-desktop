@@ -290,6 +290,25 @@ Grant the command to the narrowest capability that needs it: the launcher
 (`default.json`) gets everything, the remote `webui` window only what the hosted
 page legitimately needs.
 
+### Host capabilities, not backend capabilities
+
+Anything that hands information to a *device* — showing a path in Finder or
+Explorer, system notifications, clipboard, tray, file associations — belongs to
+this layer, never to the PixivFlow runtime. The runtime answers *where* a file
+is (`GET /api/files/location`); it must never spawn a desktop program, because
+`browser → remote backend → xdg-open` is meaningless on a server and misleads
+the user about which machine opens.
+
+The direction of responsibility is therefore one-way: the WebUI resolves and
+confines the path through the backend, then asks the host to show it. The host
+command validates only what it can see locally (does the path exist) and must
+not re-derive, expand or interpret paths.
+
+- `reveal_path(path)` — "Show in Finder" semantics: a file is *selected* in its
+  folder (`open -R` on macOS, `explorer /select,` on Windows, `xdg-open` on the
+  parent directory elsewhere), a directory is opened. Exposed to the remote
+  WebUI as the bridge function `pixivflowHost.revealPath(path)`.
+
 ### User-visible strings
 
 Every user-visible string must come from `src/frontend/i18n.js` (both locales;

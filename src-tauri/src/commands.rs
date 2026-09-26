@@ -41,8 +41,8 @@ const HOST_BRIDGE_SCRIPT: &str = r#"window.pixivflowHost = {
       .invoke('open_login_window', { authUrl: authUrl, redirectUri: redirectUri })
       .then(function (code) { return { code: code === undefined ? null : code }; });
   },
-  openDirectory: function (path) {
-    return window.__TAURI__.core.invoke('reveal_directory', { path: path });
+  revealPath: function (path) {
+    return window.__TAURI__.core.invoke('reveal_path', { path: path });
   }
 };
 (function () {
@@ -331,23 +331,77 @@ pub fn open_logs(state: State<'_, ManagedState>) -> Result<(), String> {
     open_in_default_viewer(&path)
 }
 
-/// Reveal one directory in the machine's file manager.
+/// Show one path in the machine's file manager — the "Show in Finder" action.
 ///
-/// The WebUI asks for this through the host bridge: the backend can only open a
-/// file manager on *its* host, which is a different machine whenever PixivFlow
-/// runs on a server, so the desktop opens the folder itself. The path is
-/// validated here (`exists` + `is_dir`) — the backend has already confined it to
-/// a configured download directory before the bridge is reached.
+/// The WebUI asks for this through the host bridge, because the backend can only
+/// reach a file manager on *its* host, which is a different machine whenever
+/// PixivFlow runs on a server. Showing a path is this layer's job precisely
+/// because only the desktop knows the device in front of the user.
+///
+/// The path is validated here (`exists`) and never interpreted: the backend has
+/// already confined it to a configured download directory, and this command
+/// must not re-derive, expand or guess paths. A file is *selected* in its
+/// folder rather than merely having its folder opened, matching what the user
+/// expects after a download finishes.
 #[tauri::command]
-pub fn reveal_directory(path: String) -> Result<(), String> {
-    let dir = std::path::Path::new(&path);
-    if !dir.exists() {
-        return Err(format!("directory does not exist: {path}"));
+pub fn reveal_path(path: String) -> Result<(), String> {
+    let target = std::path::Path::new(&path);
+    if !target.exists() {
+        return Err(format!("path does not exist: {path}"));
     }
-    if !dir.is_dir() {
-        return Err(format!("not a directory: {path}"));
+    reveal_in_file_manager(&path, target.is_dir())
+}
+
+/// Select `path` in the platform file manager.
+///
+/// A directory is opened; a file is revealed *inside* its parent, so the file
+/// itself is highlighted. Linux has no portable "select this file" verb —
+/// `xdg-open` on the parent directory is the honest equivalent.
+fn reveal_in_file_manager(path: &str, is_directory: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let mut command = Command::new("open");
+        if !is_directory {
+            command.arg("-R");
+        }
+        command
+            .arg(path)
+            .status()
+            .map(|_| ())
+            .map_err(|e| format!("failed to reveal {path}: {e}"))
     }
-    open_in_default_viewer(&path)
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let argument = if is_directory {
+            path.to_string()
+        } else {
+            format!("/select,{path}")
+        };
+        Command::new("explorer")
+            .arg(argument)
+            .status()
+            .map(|_| ())
+            .map_err(|e| format!("failed to reveal {path}: {e}"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        use std::process::Command;
+        let directory = if is_directory {
+            std::path::PathBuf::from(path)
+        } else {
+            std::path::Path::new(path)
+                .parent()
+                .map(|parent| parent.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from(path))
+        };
+        Command::new("xdg-open")
+            .arg(directory)
+            .status()
+            .map(|_| ())
+            .map_err(|e| format!("failed to reveal {path}: {e}"))
+    }
 }
 
 /// Spawn the OS file opener for `path`. No waiting; failures surface as Err.
@@ -477,8 +531,12 @@ fn redact_json_secrets(value: &mut serde_json::Value) {
     }
 }
 
-/// Show `path` in the OS file manager. Best effort on every platform.
-fn reveal_in_file_manager(path: &Path) {
+/// Show a directory in the OS file manager. Best effort on every platform.
+///
+/// Used by `export_diagnostics`, where the folder matters and the selection
+/// does not. The bridge's `reveal_path` uses `reveal_in_file_manager`, which
+/// also selects a single file.
+fn reveal_directory_in_file_manager(path: &Path) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("open").arg("-R").arg(path).status();
@@ -556,7 +614,7 @@ pub fn export_diagnostics(
         logs.len(),
         others.len()
     ));
-    reveal_in_file_manager(&dir);
+    reveal_directory_in_file_manager(&dir);
     Ok(dir.display().to_string())
 }
 
