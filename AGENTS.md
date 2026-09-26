@@ -275,3 +275,28 @@ Avoid:
 
 Suggested message style for docs-only work, e.g.:
 `docs: add agent guidelines and architecture documentation`
+
+## Cross-repo sync (upstream follows downstream)
+
+This repo is the **downstream** host of two upstreams: `PixivFlow` (backend,
+runtime + API contract) and `pixivflow-webui` (the UI this repo serves). A
+downstream change routinely reveals an upstream defect, a stale doc, or an
+undocumented contract.
+
+Rule: **never leave that upstream work undone or unpushed.** In the same piece
+of work:
+
+1. Fix the upstream defect there (e.g. a WebUI i18n/clipping bug is fixed in
+   `pixivflow-webui`, not worked around here).
+2. Record the contract/staleness upstream in the owning repo's docs — the host
+   integration facts belong in PixivFlow's `docs/platform-contract.md`, the
+   host/UI-difference facts in `pixivflow-webui`'s docs.
+3. Commit and **push** each repo separately (single-purpose commit, its own
+   message), and say which upstream commit landed in the report.
+
+Only the *consumption* of that contract lives here; the contract itself is
+owned upstream. Use `git -c http.proxy=http://192.168.2.20:7892 push origin HEAD`
+where a proxy is needed.
+
+Suggested message style for docs-only work, e.g.:
+`docs: add agent guidelines and architecture documentation`
