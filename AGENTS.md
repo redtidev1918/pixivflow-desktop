@@ -502,6 +502,29 @@ the only build path allowed to produce shipped installers.
   the engine. A repo-local `scripts/build-release` that only compiles into
   `dist/release/` is the sanctioned adapter.
 
+## Documentation site (docsite)
+
+`docs/` is the source of https://redtidev1918.github.io/pixivflow-desktop/
+(deployed by `.github/workflows/docs.yml`, Pages source = GitHub Actions).
+
+- **Chinese is the default language.** Prose pages live in `docs/<PAGE>.md` with
+  an English mirror in `docs/en/<PAGE>.md`; the repository front page is
+  `README.md` plus `README.en.md`. Never introduce `.zh-CN.md` files or a
+  `docs/zh-CN/` tree.
+- **Managed files are generated, not edited by hand**: `docs/index.html`,
+  `docs/assets/vendor/`, `.github/workflows/docs.yml`,
+  `.github/workflows/update-download-page.yml` and
+  `.github/scripts/update_download_page.py` come from
+  `redtidev1918/docsite` (`python3 docsite.py update`; verify with
+  `docsite.py check` and `docsite.py navcheck`).
+- **The download pages are rendered from the release**, never written by hand:
+  `docs/download.md` / `docs/en/download.md` are refreshed after every release by
+  the policy's `release.postRelease` hooks, using `.github/scripts/download-page.json`
+  and the `docs/download-preview.md` snippet.
+- **The sidebar is a hand-maintained navigation of independent pages only** —
+  in-page headings stay out of it, and English entries linking Chinese pages must
+  be annotated 「（中文）」 (see the docsite NAVIGATION rules).
+
 ## Cross-repo sync (upstream follows downstream)
 
 This repo is the **downstream** host of two upstreams: `PixivFlow` (backend,

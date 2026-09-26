@@ -1,0 +1,11 @@
+- Getting Started
+  - [Overview](/en/)
+  - [📥 Download](/en/download.md)
+  - [Quick Start](/en/QUICKSTART.md)
+  - [Troubleshooting](/en/TROUBLESHOOTING.md)
+- 中文 / Chinese
+  - [架构说明（中文）](/ARCHITECTURE.md)
+  - [开发指南（中文）](/DEVELOPMENT.md)
+  - [发布与版本管理（中文）](/RELEASE.md)
+  - [路线图（中文）](/ROADMAP.md)
+  - [生态关系（中文）](/RELATIONSHIP.md)
