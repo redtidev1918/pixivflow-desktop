@@ -3,83 +3,17 @@
 pub mod backend;
 mod commands;
 pub mod config;
+pub mod i18n;
+pub mod logger;
 pub mod login_window;
 
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use backend::manager::BackendManager;
 use config::AppConfig;
+use logger::{LastRun, Logger, SessionInfo};
 use tauri::Manager;
-
-/// Minimal append-only file logger -> `logs/desktop.log` (mirrored to stdout so
-/// it is visible during `cargo tauri dev`). No external logging dependency.
-pub struct Logger {
-    file: Mutex<BufWriter<File>>,
-    path: String,
-}
-
-impl Logger {
-    pub fn new(path: &str) -> std::io::Result<Self> {
-        let p = PathBuf::from(path);
-        if let Some(parent) = p.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&p)?;
-        Ok(Self { file: Mutex::new(BufWriter::new(file)), path: path.to_string() })
-    }
-
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    pub fn log(&self, level: &str, msg: &str) {
-        let line = format!("{} [{level}] {msg}\n", format_unix_ts(unix_now()));
-        print!("{line}"); // dev visibility
-        if let Ok(mut f) = self.file.lock() {
-            let _ = f.write_all(line.as_bytes());
-            let _ = f.flush();
-        }
-    }
-
-    pub fn info(&self, m: &str) { self.log("INFO", m); }
-    pub fn warn(&self, m: &str) { self.log("WARN", m); }
-    pub fn error(&self, m: &str) { self.log("ERROR", m); }
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn format_unix_ts(unix: u64) -> String {
-    let days = (unix / 86_400) as i64;
-    let rem = unix % 86_400;
-    let (y, mo, d) = civil_from_days(days);
-    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
-}
-
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    let y = if mo <= 2 { y + 1 } else { y };
-    (y, mo, d)
-}
 
 /// Shared application state, managed by Tauri so commands can reach it.
 pub struct ManagedState {
@@ -87,6 +21,71 @@ pub struct ManagedState {
     pub config_path: String,
     pub config_error: Mutex<Option<String>>,
     pub log: Logger,
+}
+
+/// Preferred log directory: `logDir` from the config when set, else the OS log
+/// directory (`~/Library/Logs/<bundle-id>/` on macOS), else the CWD-relative
+/// `logs/` the app used to scatter logs from.
+fn resolve_log_dir(app: &tauri::AppHandle, cfg: &AppConfig) -> PathBuf {
+    if !cfg.log_dir.trim().is_empty() {
+        return PathBuf::from(cfg.log_dir.trim_end_matches('/'));
+    }
+    match app.path().app_log_dir() {
+        Ok(dir) => dir,
+        Err(_) => PathBuf::from("logs"),
+    }
+}
+
+/// Open the logger in [`resolve_log_dir`], falling back to a CWD-relative
+/// `logs/` when that location is unusable (read-only home, a bad `logDir`).
+///
+/// Returns the directory the logger really landed in, so `last-run.json` and the
+/// collected crash reports sit next to the log they describe.
+fn open_logger(app: &tauri::AppHandle, cfg: &AppConfig) -> (Logger, PathBuf) {
+    let preferred = resolve_log_dir(app, cfg);
+    if std::fs::create_dir_all(&preferred).is_ok() {
+        let path = preferred.join("desktop.log").display().to_string();
+        if let Ok(logger) = Logger::open_rotating(&path) {
+            return (logger, preferred);
+        }
+    }
+    let fallback = PathBuf::from("logs");
+    let _ = std::fs::create_dir_all(&fallback);
+    let path = fallback.join("desktop.log").display().to_string();
+    (Logger::new(&path).expect("logger init"), fallback)
+}
+
+/// Trace the run events that can explain an exit. Window events keep the window
+/// label — a report must be able to say *which* window closed — while the
+/// per-click events (`logger::NOISY_WINDOW_EVENTS`) and the per-iteration
+/// bookkeeping events (`logger::is_logged_run_event`) are skipped, so the log
+/// stays small enough to read and to keep its history.
+fn log_run_event(log: &Logger, event: &tauri::RunEvent) {
+    let debug = format!("{event:?}");
+    match event {
+        tauri::RunEvent::WindowEvent { label, event, .. } => {
+            let inner = format!("{event:?}");
+            if logger::is_noisy_window_event(&inner) {
+                return;
+            }
+            log.info(&format!("run event: window[{label}] {inner}"));
+        }
+        _ if !logger::is_logged_run_event(&debug) => {}
+        other => log.info(&format!("run event: {other:?}")),
+    }
+}
+
+/// Flip the current run's `last-run.json` to a clean exit. Best effort.
+fn mark_clean_exit(log: &Logger) {
+    let Some(dir) = logger::panic_log_path().and_then(|p| p.parent()).map(PathBuf::from) else {
+        return;
+    };
+    let Some(mut run) = logger::read_last_run(&dir) else { return };
+    run.clean_exit = true;
+    run.exited_at = Some(logger::unix_now());
+    if let Err(e) = logger::write_last_run(&dir, &run) {
+        log.warn(&format!("cannot update last-run.json: {e}"));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -108,8 +107,15 @@ pub fn run() {
             commands::open_logs,
             commands::open_webui,
             commands::open_login_window,
+            commands::export_diagnostics,
+            commands::log_frontend,
+            i18n::get_locale,
         ])
         .setup(|app| {
+            // Panic hook first: everything below — and every later thread —
+            // must leave a durable record before any window/backend work.
+            logger::install_panic_hook();
+
             // 0. point discovery at the installed bundle resources (no-op in dev,
             //    where it falls back to the cargo manifest dir) and give the real
             //    backend a user-writable data root so it never writes into CWD.
@@ -135,14 +141,11 @@ pub fn run() {
             let config_path = config::config_path(app.handle())
                 .unwrap_or_else(|_| PathBuf::from("desktop-config.json"));
 
-            // 2. logs
-            let log_path = if !cfg.log_dir.is_empty() {
-                format!("{}/desktop.log", cfg.log_dir.trim_end_matches('/'))
-            } else {
-                "logs/desktop.log".to_string()
-            };
-            let logger = Logger::new(&log_path)
-                .unwrap_or_else(|_| Logger::new("logs/desktop.log").expect("logger init"));
+            // 2. logs — the OS log directory by default, so a launched app stops
+            //    scattering `logs/` across the repo, `src-tauri/` and `/tmp`.
+            //    `logDir` in the config still wins and `logs/` stays the fallback.
+            let (logger, log_dir) = open_logger(app.handle(), &cfg);
+            logger::set_panic_log_path(PathBuf::from(logger.path()));
 
             let state = ManagedState {
                 manager: Mutex::new(BackendManager::new(cfg.clone())),
@@ -155,14 +158,55 @@ pub fn run() {
                 cfg.mode,
                 cfg.port()
             ));
-            state.log.info(&format!("config: {}", state.config_path));
+
+            let version = app.package_info().version.to_string();
+            let data_dir = app
+                .path()
+                .app_local_data_dir()
+                .map(|d| d.join("pixivflow").display().to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            let resource_dir = app
+                .path()
+                .resource_dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            // Mirrors what `BackendManager::start()` will decide: the login token
+            // exchange and every download run inside the backend process, which a
+            // Finder/Dock launch starts with no inherited environment.
+            // Availability only: the injection decision needs the resolved
+            // LaunchSpec and is logged by `backend proxy: ...` once it is made.
+            let proxy_available = backend::proxy::system_proxy().is_some();
+            state.log.session_marker(&SessionInfo {
+                version: &version,
+                log_path: state.log.path(),
+                config_path: &state.config_path,
+                data_dir: &data_dir,
+                resource_dir: &resource_dir,
+                locale: i18n::locale(),
+                proxy_available,
+            });
             if let Some(cfg_err) = &*state.config_error.lock().unwrap() {
                 state.log.error(&format!("{cfg_err} (使用默认配置)"));
             }
 
+            // 3. bookkeeping: warn about a run that never exited cleanly and keep
+            //    the native crash evidence it left behind, then record this run.
+            let started_at = logger::unix_now();
+            logger::check_previous_run(&state.log, &log_dir, started_at);
+            let current_run = LastRun {
+                started_at,
+                clean_exit: false,
+                pid: std::process::id(),
+                version: version.clone(),
+                exited_at: None,
+            };
+            if let Err(e) = logger::write_last_run(&log_dir, &current_run) {
+                state.log.warn(&format!("cannot write last-run.json: {e}"));
+            }
+
             app.manage(state);
 
-            // 3. auto-start the local backend in the background
+            // 4. auto-start the local backend in the background
             let app_handle = app.handle().clone();
             let auto_port = cfg.port();
             if cfg.is_local() && cfg.backend.auto_start {
@@ -188,7 +232,7 @@ pub fn run() {
                             }
                         }
                     }
-                    // 4. once the backend answers healthy, hand the user straight
+                    // 5. once the backend answers healthy, hand the user straight
                     //    to the WebUI — no manual click on "打开 PixivFlow".
                     //    Window creation must happen on the main thread.
                     if commands::poll_health_for(&app_handle) {
@@ -249,6 +293,13 @@ pub fn run() {
     // orphaned holding the port. Stop it here as well: `stop()` is idempotent and
     // adoption covers a backend that still survives an abrupt kill.
     app.run(|handle, event| {
+        let state = handle.try_state::<ManagedState>();
+
+        // 6. run-event trace (high-frequency focus/scale events are filtered out).
+        if let Some(state) = &state {
+            log_run_event(&state.log, &event);
+        }
+
         // Both variants are handled: `ExitRequested` covers the last window being
         // destroyed / an explicit `exit()`, `Exit` covers a macOS quit (Cmd+Q,
         // app menu, AppleScript `quit`), which tears the app down without ever
@@ -257,11 +308,16 @@ pub fn run() {
             event,
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         );
-        if let (true, Some(state)) = (exiting, handle.try_state::<ManagedState>()) {
+        if let (true, Some(state)) = (exiting, &state) {
             match state.manager.lock().unwrap().stop() {
                 Ok(()) => state.log.info(&format!("app exit ({event:?}): backend stopped (graceful)")),
                 Err(e) => state.log.warn(&format!("app exit: stop backend failed: {e}")),
             }
+        }
+        // 7. a clean quit is what tells the next startup that the previous run
+        //    did *not* crash — recorded last, after the backend is down.
+        if let (true, Some(state)) = (exiting, &state) {
+            mark_clean_exit(&state.log);
         }
     });
 }

@@ -21,6 +21,7 @@ const el = {
   restart: document.getElementById("btn-restart"),
   stop: document.getElementById("btn-stop"),
   openLogs: document.getElementById("btn-open-logs"),
+  diagnostics: document.getElementById("btn-diagnostics"),
   footSrc: document.getElementById("foot-src"),
   footVer: document.getElementById("foot-ver"),
   footMode: document.getElementById("foot-mode"),
@@ -75,9 +76,39 @@ async function resolveLocale() {
   return normalizeLocale(raw) || normalizeLocale(globalThis.navigator?.language) || FALLBACK_LOCALE;
 }
 
+// Forward launcher-side JS failures to the desktop log (command `log_frontend`)
+// so a user's diagnostic bundle contains the UI half of the story. Best effort
+// and hard-capped: logging must never break the UI, and a render loop must never
+// be able to flood the log.
+const FORWARD_LIMIT = 20;
+let forwarded = 0;
+
+function forwardLog(level, message, source) {
+  if (forwarded >= FORWARD_LIMIT) return;
+  const text = String(message ?? "").slice(0, 2000);
+  if (!text) return;
+  forwarded += 1;
+  try {
+    invoke("log_frontend", { level, message: text, source: String(source ?? "") }).catch(() => {});
+  } catch (_) {
+    /* never let logging break the UI */
+  }
+}
+
+window.addEventListener("error", (event) => {
+  const where = event && event.filename ? `${event.filename}:${event.lineno}` : "";
+  forwardLog("error", (event && event.message) || "window error", where);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event ? event.reason : null;
+  forwardLog("error", (reason && reason.message) || reason, "unhandledrejection");
+});
+
 // Never let any single failure blank the page — route it to the error surface.
 function renderError(error) {
   const msg = error && error.message ? String(error.message) : String(error);
+  forwardLog("error", msg, "launcher");
   renderView({ state: "error", message: msg });
 }
 
@@ -150,6 +181,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   el.openLogs.addEventListener("click", async () => {
     try {
       await invoke("open_logs");
+    } catch (err) {
+      renderError(err);
+    }
+  });
+  el.diagnostics.addEventListener("click", async () => {
+    try {
+      const path = await invoke("export_diagnostics");
+      el.line.textContent = t("line.diagnosticsReady", { path });
     } catch (err) {
       renderError(err);
     }

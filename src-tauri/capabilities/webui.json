@@ -1,10 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "webui",
-  "description": "Capability for the WebUI window served by the backend: remote content may reach ONLY the host login bridge. No backend-lifecycle command is granted here — the remote page must not be able to stop, start or reconfigure the backend.",
+  "description": "Capability for the WebUI window served by the backend: remote content may reach ONLY the host login bridge plus error forwarding. No backend-lifecycle command is granted here — the remote page must not be able to stop, start or reconfigure the backend.",
   "windows": ["webui"],
   "remote": {
     "urls": ["http://127.0.0.1:*", "http://localhost:*"]
   },
-  "permissions": ["core:default", "allow-open-login-window"]
+  "permissions": ["core:default", "allow-open-login-window", "allow-log-frontend"]
 }

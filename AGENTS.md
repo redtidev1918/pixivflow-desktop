@@ -142,8 +142,15 @@ Forbidden:
 The bundled runtime wins so a shipped install is never perturbed by a stray
 `pixivflow` on PATH or in config.
 
-Only `STATIC_PATH` (and `PORT` / `HOST`) is injected into the backend's
-environment. **Storage paths are never injected**: PixivFlow's path auto-fixer
+Reachability variables **are** injected: `BackendManager::start()` forwards the
+system proxy as `HTTPS_PROXY` / `HTTP_PROXY` (read from `scutil --proxy`, never
+overriding a value the user or the `LaunchSpec` already set) plus a loopback
+`NO_PROXY`. A Finder/Dock launch inherits no environment, and both the login
+token exchange and every download happen *inside the backend process* — without
+this the backend could never reach Pixiv even though the login webview can.
+Otherwise the backend still only receives `STATIC_PATH` (plus `PORT` / `HOST`).
+
+**Storage paths are never injected**: PixivFlow's path auto-fixer
 rewrites absolute paths outside its `process.cwd()` back to `./data`, so the
 desktop instead spawns the backend **with its CWD set to the per-user data root**
 (`app_local_data_dir()/pixivflow`). PixivFlow's own `config/`, `data/` and
@@ -195,6 +202,51 @@ Any change must consider:
 - backward compatibility
 - migration path
 - release notes
+
+## Logging & diagnostics
+
+The log lives in the **OS log dir** (`~/Library/Logs/dev.redtidev.pixivflowdesktop/`
+on macOS), not in the repo; a non-empty `logDir` in `desktop-config.json`
+overrides it and a CWD-relative `logs/` is only the last resort. It rotates at
+**2 MiB**, keeping `desktop.log.1`…`.3` beside a fresh `desktop.log`, so a user
+can always hand over a bounded artifact.
+
+- Timestamps are UTC and explicit: `2026-09-26T18:21:48Z`.
+- **Panics are captured**: the hook appends `PANIC <payload> at <file>:<line>`
+  plus a forced backtrace to the log and to a sibling `panic-<utc-ts>.log`,
+  while the standard stderr message still prints.
+- **Run events are traced**: every `RunEvent` is logged compactly, window events
+  with their label, but high-frequency focus / scale / move events are filtered
+  out so a click or a resize never drowns the log.
+- **Never log secrets.** Tokens, codes, passwords and credentials must never
+  reach a line; foreign text (panic payloads, frontend messages) goes through
+  `logger::redact_secrets` first.
+- A `crash-*.ips` copy collected into the log dir is the durable evidence of a
+  native crash — macOS retires and later purges the originals from
+  `DiagnosticReports/`, so the copy is the only lasting record.
+- **`export_diagnostics` is the supported way to collect evidence from a user**:
+  one folder with the logs, `last-run.json`, collected crash reports,
+  `doctor.json`, a secret-redacted `config.json` and `env.txt`.
+
+### Adding a command
+
+Every app command must appear in **three** places; miss one and the window is
+refused at runtime with `Command <name> not allowed by ACL`:
+
+1. the ACL manifest in `src-tauri/build.rs` (`AppManifest::new().commands(&[…])`),
+2. the capability that should be allowed to call it
+   (`src-tauri/capabilities/*.json`, permission id `allow-<command>`, `_` → `-`),
+3. `generate_handler!` in `src-tauri/src/lib.rs`.
+
+Grant the command to the narrowest capability that needs it: the launcher
+(`default.json`) gets everything, the remote `webui` window only what the hosted
+page legitimately needs.
+
+### User-visible strings
+
+Every user-visible string must come from `src/frontend/i18n.js` (both locales;
+key parity is enforced by the frontend tests) or `src-tauri/src/i18n.rs` —
+never hard-coded at the call site. English must stay byte-identical.
 
 ## Development Rules
 

@@ -13,6 +13,9 @@
     "allow-restart-backend",
     "allow-backend-doctor",
     "allow-open-logs",
-    "allow-open-webui"
+    "allow-open-webui",
+    "allow-export-diagnostics",
+    "allow-log-frontend",
+    "allow-get-locale"
   ]
 }

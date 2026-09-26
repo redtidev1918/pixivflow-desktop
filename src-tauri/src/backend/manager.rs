@@ -189,8 +189,13 @@ impl BackendManager {
         }
         let port = self.config.port();
         if port_is_open(port) {
-            let err = format!(
-                "端口 {port} 已被占用，无法启动 backend（改 small 配置中的 port 或确认无旧进程）"
+            let err = crate::i18n::t(
+                &format!(
+                    "端口 {port} 已被占用，无法启动 backend（改 small 配置中的 port 或确认无旧进程）"
+                ),
+                &format!(
+                    "port {port} is already in use; cannot start the backend (change `port` in the small config, or make sure no old process is running)"
+                ),
             );
             *self.last_error.lock().unwrap() = Some(err.clone());
             return Err(err);

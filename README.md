@@ -47,6 +47,11 @@ and bundles it.
 - **WebUI integration (方案 A)** — the desktop opens the bundled WebUI directly
   over `http://127.0.0.1:{port}/`, served by the backend via `STATIC_PATH` (no
   second frontend). A dedicated `webui` window is created/reused on demand.
+- **Collect diagnostics & system-language UI** — the launcher follows the system
+  language (`zh` / `en`) and a **收集诊断 / Collect diagnostics** button bundles
+  the logs, the last-run record, any native crash report, doctor output and a
+  secret-free config into one folder and reveals it in the file manager — the
+  supported way to send a support report.
 
 ## Status (F2.2 — Bundled runtime + WebUI integration)
 

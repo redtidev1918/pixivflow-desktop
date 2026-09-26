@@ -21,7 +21,7 @@
 import { execSync } from 'node:child_process';
 import {
   chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
-  realpathSync, rmSync, writeFileSync,
+  realpathSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -93,24 +93,41 @@ function installProdDeps(pkgJsonPath, lockPath, destDir) {
       cpSync(lockPath, join(stage, 'package-lock.json'));
     }
     run(`npm ci --omit=dev --no-audit --no-fund`, { cwd: stage });
+    // Replace any previous tree instead of merging into it, so a stale entry
+    // from an earlier fetch can never survive into the next bundle.
+    rmSync(join(destDir, 'node_modules'), { recursive: true, force: true });
     cpSync(join(stage, 'node_modules'), join(destDir, 'node_modules'), { recursive: true });
-    pruneDanglingSymlinks(join(destDir, 'node_modules'));
+    materializeSymlinks(join(destDir, 'node_modules'));
     log(`node_modules copied (prod-only) -> ${join(destDir, 'node_modules')}`);
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }
 }
 
-// Remove symlinks whose targets no longer exist. `npm ci` runs in a temp stage,
-// so .bin entries (and similar) copied out of it point at deleted paths; the
-// Tauri build script rejects such missing resources.
-function pruneDanglingSymlinks(dir) {
+// Collapse every symlink in the copied tree into a real file/directory.
+//
+// `npm ci` runs in a temp stage, so `.bin` entries copied out of it point at
+// deleted `/private/var/folders/.../T/pfx-prod-*` paths. The Tauri build script
+// walks every bundled resource and rejects a symlink that does not resolve
+// inside the resource dir ("resource path … doesn't exist"), which breaks BOTH
+// `tauri build` and `cargo test`. Dangling links are dropped; surviving links
+// (e.g. `.bin/x -> ../x/bin/x.js`) are dereferenced so the resource tree is
+// self-contained.
+function materializeSymlinks(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      pruneDanglingSymlinks(p);
-    } else if (entry.isSymbolicLink()) {
-      if (!existsSync(p)) rmSync(p, { force: true });
+    if (entry.isSymbolicLink()) {
+      if (!existsSync(p)) {
+        rmSync(p, { force: true });
+        continue;
+      }
+      const target = realpathSync(p);
+      const tmp = `${p}.__materialized__`;
+      cpSync(target, tmp, { recursive: true, dereference: true });
+      rmSync(p, { recursive: true, force: true });
+      renameSync(tmp, p);
+    } else if (entry.isDirectory()) {
+      materializeSymlinks(p);
     }
   }
 }

@@ -241,3 +241,41 @@ The setup hook resolves `app.path().app_local_data_dir()/pixivflow` (macOS:
 creates it, and stores it as the process CWD for the backend. PixivFlow then
 creates its own `config/`, `data/` (SQLite) and `downloads/` there. Nothing is
 written next to the installed `.app`.
+
+## Observability
+
+Everything the app knows about its own run ends up in one directory, so a report
+from a user is a folder rather than a terminal session. All of it is
+dependency-free (`src-tauri/src/logger.rs`).
+
+- **Logger** — a `BufWriter<File>` behind a `Mutex`, appending
+  `2026-09-26T18:21:48Z [LEVEL] message` lines and mirroring them to stdout for
+  `cargo tauri dev`. The path is the OS log dir
+  (`app_log_dir()` → `~/Library/Logs/dev.redtidev.pixivflowdesktop/`), else
+  `logDir` from the config, else a CWD-relative `logs/`. At startup an oversized
+  `desktop.log` is rotated at 2 MiB into three generations.
+- **Session marker** — the first lines record version, OS/arch, pid, the resolved
+  log / config / data / resource paths, the locale and whether a system proxy was
+  injected into the backend environment.
+- **Panic hook** — installed before any window or backend work. A panic appends
+  `PANIC <payload> at <file>:<line>` plus a forced backtrace through a **fresh
+  file handle** (never the logger mutex, which the panicking thread may hold) and
+  also writes a sibling `panic-<utc-ts>.log`, then chains to the default hook so
+  stderr keeps its message.
+- **Run-event trace** — `app.run`'s callback logs every `RunEvent` compactly, so
+  the log shows why the app exited; per-click focus / scale / move events are
+  filtered out, window events carry their label.
+- **Crash evidence** — `last-run.json` (`{startedAt, cleanExit, pid, version}`)
+  is written at startup and rewritten on exit. An unclean previous run logs a
+  WARN and copies the newest matching `pixivflow-desktop-*.ips` from
+  `~/Library/Logs/DiagnosticReports/` into the log dir as `crash-<ts>.ips` —
+  macOS retires and purges the originals, so the copy is the durable evidence.
+- **Frontend forwarding** — the injected host bridge and `src/frontend/main.js`
+  forward `error` / `unhandledrejection` (and launcher render errors) to the
+  `log_frontend` command, capped per page load and truncated, so a WebUI-side
+  failure still leaves a Rust-side trace. The remote `webui` capability allows
+  exactly two commands: the login bridge and `log_frontend`.
+- **Diagnostics bundle** — `export_diagnostics` copies the log + rotations,
+  `last-run.json`, collected `crash-*.ips`, `doctor.json`, a `config.json` whose
+  secret-looking values are replaced by `"***"`, and `env.txt` into
+  `<log dir>/diagnostics-<utc-ts>/`, then reveals it in the OS file manager.

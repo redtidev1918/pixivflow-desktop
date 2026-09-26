@@ -1,6 +1,7 @@
 //! Tauri commands (F1). Rust owns system capability; the frontend only
 //! invokes these and renders the resulting status.
 
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -10,6 +11,8 @@ use crate::backend::discovery::{self, DoctorReport, WebuiReport};
 use crate::backend::manager;
 use crate::backend::{BackendSource, LaunchSpec, StatusSnapshot};
 use crate::config::AppConfig;
+use crate::i18n;
+use crate::logger;
 use crate::login_window::{extract_auth_code, parse_url};
 use crate::ManagedState;
 
@@ -26,13 +29,48 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// (pixivflow-webui `src/types/host-bridge.d.ts`), so the raw command result is
 /// wrapped: the command resolves `Option<String>` (cancellation and timeout are
 /// `null`), and the bridge always resolves an object with a `code` property.
+///
+/// The script also forwards the WebUI's own JS errors to `log_frontend`: the
+/// remote page is served from another repository, so without this its failures
+/// would never appear in the desktop log. Forwarding is capped per page load,
+/// truncated, wrapped in try/catch and never throws — a rendering loop must not
+/// be able to flood the log or break the page.
 const HOST_BRIDGE_SCRIPT: &str = r#"window.pixivflowHost = {
   openLoginWindow: function (authUrl, redirectUri) {
     return window.__TAURI__.core
       .invoke('open_login_window', { authUrl: authUrl, redirectUri: redirectUri })
       .then(function (code) { return { code: code === undefined ? null : code }; });
   }
-};"#;
+};
+(function () {
+  var MAX_EVENTS = 20;
+  var MAX_MESSAGE = 2000;
+  var MAX_SOURCE = 200;
+  var forwarded = 0;
+  function clip(value, limit) {
+    var text = value === undefined || value === null ? '' : String(value);
+    return text.length > limit ? text.slice(0, limit) + '...' : text;
+  }
+  function forward(level, message, source) {
+    if (forwarded >= MAX_EVENTS) { return; }
+    forwarded = forwarded + 1;
+    try {
+      window.__TAURI__.core.invoke('log_frontend', {
+        level: level,
+        message: clip(message, MAX_MESSAGE),
+        source: clip(source, MAX_SOURCE)
+      }).catch(function () {});
+    } catch (e) { /* logging must never break the page */ }
+  }
+  window.addEventListener('error', function (event) {
+    var where = event && event.filename ? event.filename + ':' + event.lineno : '';
+    forward('error', event && event.message ? event.message : 'window error', where);
+  });
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event ? event.reason : null;
+    forward('error', reason && reason.message ? reason.message : reason, 'unhandledrejection');
+  });
+})();"#;
 
 /// Log one info line for the login bridge. Uses the same `ManagedState` handle
 /// as the rest of the file, and is callable from any thread (main thread, the
@@ -226,6 +264,12 @@ pub fn apply_discovery(state: &ManagedState) -> (discovery::BackendDescriptor, b
 /// F2.1 diagnostic: what backend did discovery resolve, and is it healthy?
 #[tauri::command]
 pub fn backend_doctor(state: State<'_, ManagedState>) -> DoctorReport {
+    doctor_report(&state)
+}
+
+/// The `backend_doctor` body as a plain function, so `export_diagnostics` can
+/// serialize the same report into `doctor.json` without going through IPC.
+pub fn doctor_report(state: &ManagedState) -> DoctorReport {
     let cfg = state.manager.lock().unwrap().config_clone();
     let d = discovery::discover_with_version(&cfg);
     let running = state.manager.lock().unwrap().is_running();
@@ -316,6 +360,184 @@ fn open_in_default_viewer(path: &str) -> Result<(), String> {
 }
 
 
+// --------------------------------------------------------- frontend logging
+
+/// Forward one line from the launcher UI or the remote WebUI into the desktop
+/// log, so a user report contains the JS side of the story too.
+///
+/// Deliberately tolerant: an unknown level degrades to `info`, the text is
+/// redacted and clamped, and the call never fails the caller.
+#[tauri::command]
+pub fn log_frontend(
+    state: State<'_, ManagedState>,
+    level: Option<String>,
+    message: String,
+    source: Option<String>,
+) -> Result<(), String> {
+    let level = match level.as_deref().map(str::to_ascii_lowercase).as_deref() {
+        Some("warn") => "WARN",
+        Some("error") => "ERROR",
+        _ => "INFO",
+    };
+    let text = logger::truncate_chars(
+        &logger::redact_secrets(&message),
+        logger::MAX_FORWARDED_CHARS,
+    );
+    let origin = source
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| logger::redact_secrets(&logger::truncate_chars(s, 200)));
+    let line = match origin {
+        Some(origin) => format!("frontend [{origin}]: {text}"),
+        None => format!("frontend: {text}"),
+    };
+    state.log.log(level, &line);
+    Ok(())
+}
+
+// ------------------------------------------------------- diagnostics export
+
+/// Copy every regular file in `source_dir` whose name `keep` accepts into
+/// `dest_dir`. Per-file best effort; returns the names that were copied.
+fn copy_files_matching(
+    source_dir: &Path,
+    dest_dir: &Path,
+    keep: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(source_dir) else {
+        return Vec::new();
+    };
+    let mut copied = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !keep(&name) {
+            continue;
+        }
+        if std::fs::copy(&path, dest_dir.join(&name)).is_ok() {
+            copied.push(name);
+        }
+    }
+    copied
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    ["token", "secret", "password", "credential"]
+        .iter()
+        .any(|needle| key.contains(needle))
+}
+
+/// Replace the value of every key matching `(?i)token|secret|password|credential`
+/// with `"***"`, at any depth. Defensive: the config carries no secret today, but
+/// a user-edited `desktop-config.json` — or a field added later — might.
+fn redact_json_secrets(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, val) in map.iter_mut() {
+                if is_secret_key(key) {
+                    *val = serde_json::Value::String("***".into());
+                } else {
+                    redact_json_secrets(val);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                redact_json_secrets(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Show `path` in the OS file manager. Best effort on every platform.
+fn reveal_in_file_manager(path: &Path) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg("-R").arg(path).status();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = open_in_default_viewer(&path.display().to_string());
+    }
+}
+
+/// Bundle the log, the run bookkeeping, any collected crash report, the doctor
+/// report, a secret-free copy of the config and an environment summary into one
+/// folder, then reveal it. This is the supported way to collect evidence from a
+/// user: it never needs a terminal and never carries a secret.
+#[tauri::command]
+pub fn export_diagnostics(
+    app: AppHandle,
+    state: State<'_, ManagedState>,
+) -> Result<String, String> {
+    let log_path = PathBuf::from(state.log.path());
+    let log_dir = log_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("logs"));
+    let dir = log_dir.join(format!("diagnostics-{}", logger::compact_utc_ts(logger::unix_now())));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+
+    // (a) the live log plus every rotated generation, (b) the run bookkeeping
+    // and (c) any crash report a previous startup already collected.
+    let logs = copy_files_matching(&log_dir, &dir, |name| {
+        name == "desktop.log" || name.starts_with("desktop.log.")
+    });
+    let others = copy_files_matching(&log_dir, &dir, |name| {
+        name == "last-run.json" || (name.starts_with("crash-") && name.ends_with(".ips"))
+    });
+
+    // (d) the doctor report, rendered exactly like `backend_doctor`.
+    let doctor = serde_json::to_string_pretty(&doctor_report(&state))
+        .map_err(|e| format!("serialize doctor report: {e}"))?;
+    std::fs::write(dir.join("doctor.json"), doctor)
+        .map_err(|e| format!("write doctor.json: {e}"))?;
+
+    // (e) the app config with every secret-looking value masked.
+    let cfg = state.manager.lock().unwrap().config_clone();
+    let mut value = serde_json::to_value(&cfg).map_err(|e| format!("serialize config: {e}"))?;
+    redact_json_secrets(&mut value);
+    let cfg_json =
+        serde_json::to_string_pretty(&value).map_err(|e| format!("serialize config: {e}"))?;
+    std::fs::write(dir.join("config.json"), cfg_json)
+        .map_err(|e| format!("write config.json: {e}"))?;
+
+    // (f) the environment summary.
+    let path_of = |p: Option<PathBuf>| {
+        p.map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unknown>".to_string())
+    };
+    let env_txt = format!(
+        "version: {}\nos: {} arch: {}\npid: {}\nlog: {}\nconfig: {}\ndata dir: {}\nresource dir: {}\nlocale: {}\n",
+        app.package_info().version,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::process::id(),
+        state.log.path(),
+        state.config_path,
+        path_of(app.path().app_local_data_dir().ok()),
+        path_of(app.path().resource_dir().ok()),
+        i18n::locale(),
+    );
+    std::fs::write(dir.join("env.txt"), env_txt)
+        .map_err(|e| format!("write env.txt: {e}"))?;
+
+    state.log.info(&format!(
+        "export_diagnostics -> {} ({} log file(s), {} other artifact(s))",
+        dir.display(),
+        logs.len(),
+        others.len()
+    ));
+    reveal_in_file_manager(&dir);
+    Ok(dir.display().to_string())
+}
+
 /// Show (or create) the dedicated WebUI window pointing at the backend on
 /// `port`. Shared by the `open_webui` command and the auto-start path, so both
 /// a manual click and a normal launch end up in the same window.
@@ -375,7 +597,12 @@ pub fn open_webui(
 ) -> Result<String, String> {
     let port = state.manager.lock().unwrap().port();
     if !state.manager.lock().unwrap().is_running() {
-        return Err(format!("backend 未运行(port {port})，无法打开 WebUI — 请先启动 backend"));
+        return Err(i18n::t(
+            &format!("backend 未运行(port {port})，无法打开 WebUI — 请先启动 backend"),
+            &format!(
+                "the backend is not running (port {port}), cannot open the WebUI — start the backend first"
+            ),
+        ));
     }
     let base = open_webui_window(&app, port)?;
     log_scale_factors(&app);
@@ -440,7 +667,7 @@ pub async fn open_login_window(
         let nav_app = main_app.clone();
         let builder =
             tauri::WebviewWindowBuilder::new(&main_app, "login", tauri::WebviewUrl::External(url))
-                .title("Pixiv 登录")
+                .title(i18n::t_static("Pixiv 登录", "Pixiv Sign-in"))
                 .inner_size(560.0, 780.0)
                 .resizable(true)
                 .center()

@@ -72,8 +72,21 @@ cargo tauri build --bundles app   # macOS .app only (fastest packaging check)
   `lsof -nP -iTCP:3000 -sTCP:LISTEN` then `kill <pid>`.
 - **WebUI static:** the backend serves the bundled WebUI dist over `STATIC_PATH`
   — `curl http://127.0.0.1:3000/` should return the WebUI `index.html`.
-- **Logs:** the desktop app appends to `logs/desktop.log` (startup, discovery
-  resolution, lifecycle events); the control UI has an **Open Logs** button.
+- **Logs:** the desktop app appends to the **OS log dir** —
+  `~/Library/Logs/dev.redtidev.pixivflowdesktop/desktop.log` on macOS — not to the
+  repo. A non-empty `logDir` in `desktop-config.json` overrides it; a
+  CWD-relative `logs/desktop.log` is only the last resort. It rotates at 2 MiB,
+  keeping `desktop.log.1`…`.3`, and an unclean exit is recorded in
+  `last-run.json` in the same dir. The control UI has an **Open Logs** button.
+- **Locale:** the launcher UI follows the system language (`zh` / `en`). Force
+  one with `PIXIVFLOW_DESKTOP_LOCALE=zh` (or `en`) — useful when the OS language
+  is not what you want to test. The WebUI has its own locale setting.
+- **Diagnostics:** the launcher's **收集诊断 / Collect diagnostics** button (IPC
+  `export_diagnostics`) writes `<log dir>/diagnostics-<utc-ts>/` with the log and
+  its rotations, `last-run.json`, any collected `crash-*.ips`, `doctor.json`, a
+  secret-redacted `config.json` and `env.txt`, then reveals the folder in Finder.
+  To collect evidence from a user, ask for that folder — not for a terminal
+  session.
 - **Doctor:** `backend_doctor` IPC reports `source` / `version` / `port` /
   `running` / `healthy` — surfaced in the control UI footer.
 
