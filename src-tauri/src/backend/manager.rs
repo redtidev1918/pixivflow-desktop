@@ -9,6 +9,7 @@
 //!   - health_check(): minimal `GET {port}/api/health` probe using std TcpStream
 //!     (no HTTP client dependency).
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Child, Command};
@@ -34,10 +35,23 @@ pub struct StatusSnapshot {
     pub message: Option<String>,
 }
 
+/// An adapter-injected launch configuration (from discovery).
+///
+/// Additive only: carries the argv plus any extra env (e.g. `STATIC_PATH` for
+/// 方案 A WebUI hosting). The core lifecycle (spawn / stop / restart / health)
+/// is unchanged — this is purely how the command is wired in.
+#[derive(Debug, Clone, Default)]
+pub struct LaunchSpec {
+    /// Full argv (`argv[0]` = executable).
+    pub command: Vec<String>,
+    /// Extra environment variables to inject at spawn.
+    pub env: BTreeMap<String, String>,
+}
+
 pub struct BackendManager {
     config: AppConfig,
-    /// Adapter-injected command (from discovery). Preferred over config/mock.
-    command_override: Option<(String, Vec<String>)>,
+    /// Adapter-injected launch spec (from discovery). Preferred over config/mock.
+    command_override: Option<LaunchSpec>,
     child: Mutex<Option<Child>>,
     /// Last healthy probe result, kept in sync by the caller's poll loop.
     healthy: Mutex<Option<bool>>,
@@ -81,11 +95,11 @@ impl BackendManager {
     /// Inject the command chosen by the discovery adapter. `None` restores the
     /// default resolution (config `backend.command`, else the bundled mock).
     /// This is an adapter wiring point only — it does NOT change the lifecycle.
-    pub fn set_command_override(&mut self, command: Option<(String, Vec<String>)>) {
-        self.command_override = command;
+    pub fn set_command_override(&mut self, spec: Option<LaunchSpec>) {
+        self.command_override = spec;
     }
 
-    pub fn command_override(&self) -> Option<(String, Vec<String>)> {
+    pub fn command_override(&self) -> Option<LaunchSpec> {
         self.command_override.clone()
     }
 
@@ -118,11 +132,14 @@ impl BackendManager {
             *self.last_error.lock().unwrap() = Some(err.clone());
             return Err(err);
         }
-        let (cmd, args) = self.resolve_command()?;
-        let mut c = Command::new(&cmd);
-        c.args(&args)
+        let (argv, extra_env) = self.resolve_command()?;
+        let mut c = Command::new(&argv[0]);
+        c.args(&argv[1..])
             .env("PORT", port.to_string())
             .env("HOST", "127.0.0.1");
+        for (k, v) in extra_env {
+            c.env(k, v);
+        }
         let child = c.spawn().map_err(|e| {
             *self.last_error.lock().unwrap() = Some(format!("spawn backend 失败: {e}"));
             format!("spawn backend 失败: {e}")
@@ -192,17 +209,20 @@ impl BackendManager {
         Ok(status_line.contains(" 200 "))
     }
 
-    fn resolve_command(&self) -> Result<(String, Vec<String>), String> {
-        if let Some((cmd, args)) = &self.command_override {
-            if !cmd.is_empty() {
-                return Ok((cmd.clone(), args.clone()));
+    fn resolve_command(&self) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+        // Adapter-injected spec (bundled / config / PATH via discovery) wins.
+        if let Some(spec) = &self.command_override {
+            if !spec.command.is_empty() {
+                return Ok((spec.command.clone(), spec.env.clone()));
             }
         }
+        // User-configured command (direct, bypassing discovery).
         if !self.config.backend.command.trim().is_empty() {
-            return Ok((self.config.backend.command.clone(), self.config.backend.args.clone()));
+            let mut argv = vec![self.config.backend.command.clone()];
+            argv.extend(self.config.backend.args.iter().cloned());
+            return Ok((argv, BTreeMap::new()));
         }
-        // Dev default: the bundled mock backend (health-probe stub). F2 replaces
-        // this with the real PixivFlow via BackendCommand.
+        // Dev/test default: the bundled mock backend (health-probe stub).
         let candidates = [
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("resources/mock-backend.mjs"),
@@ -210,7 +230,7 @@ impl BackendManager {
         ];
         for c in &candidates {
             if c.exists() {
-                return Ok(("node".into(), vec![c.display().to_string()]));
+                return Ok((vec!["node".into(), c.display().to_string()], BTreeMap::new()));
             }
         }
         Err("未配置 backend.command 且未找到默认 mock backend（F1 仅演示用）".into())

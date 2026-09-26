@@ -52,20 +52,35 @@ serving; it never re-implements the interface.
 *which command to run* is the job of the discovery/adapter layer
 (`src-tauri/src/backend/discovery.rs`), which resolves in priority order:
 
-1. bundled `resources/runtime/pixivflow` (shipped inside the app)
-2. user-configured `backend.command` + `backend.args`
-3. `pixivflow` found on `PATH`
-4. fallback: bundled mock backend (dev/testing only)
+1. **bundled** `resources/runtime/pixivflow/` — described by an inline
+   `runtime-manifest.json` (`{name, version, platform, command[], health,
+   servesWebui}`); a legacy bare `pixivflow`/`pixivflow.exe` executable is
+   accepted as a fallback.
+2. **user-configured** `backend.command` + `backend.args` (user override).
+3. `pixivflow` found on `PATH`.
+4. fallback: bundled **mock** backend (dev/testing only).
 
-Resolution result (`BackendDescriptor{source, executable_path, command, version}`)
-is injected into the manager via `set_command_override()` before `start()`; the
-manager's own fallback (config `command` → mock) is unchanged. The `backend_doctor`
-Tauri command surfaces the same resolution plus live runtime status
-(`running` / `healthy`), with `version` probed by running `<command> --version`
-under a timeout.
+Resolution result (`BackendDescriptor{source, executable_path, command,
+version, static_path, serves_webui}`) is injected into the manager via
+`set_command_override(Some(LaunchSpec{command, env}))` before `start()`; the
+`LaunchSpec` carries the extra env (`STATIC_PATH=<resources/webui/dist>`) needed
+for 方案 A WebUI serving. The manager's own fallback (config `command` → mock) is
+unchanged. The `backend_doctor` Tauri command surfaces the same resolution plus
+live runtime status (`running` / `healthy`), with `version` probed by running
+`<command> --version` under a timeout.
 
-Backend config shape (flat, per the desktop-config contract):
+### WebUI integration (方案 A) — F2.2
+
+The desktop does **not** maintain a second frontend. The resolved backend is
+expected to serve the static WebUI over `STATIC_PATH` (the bundled
+`resources/webui/dist`), and the `open_webui` Tauri command opens
+`http://127.0.0.1:{port}/` in a dedicated `webui` webview window (reusing it if
+already open). The Tauri shell (Vite `src/frontend`) is only the *control /
+status* surface, separate from the WebUI product page.
+
+Backend config shape (flat, per the desktop-config contract — `mode` is a
+**top-level** field, not under `backend`):
 
 ```json
-{ "backend": { "mode": "local", "command": "", "args": [], "port": 3000, "autoStart": true } }
+{ "mode": "local", "backend": { "port": 3000, "autoStart": true, "command": "", "args": [] } }
 ```

@@ -16,7 +16,9 @@ const el = {
   errorLabel: document.getElementById("error-reason"),
   errorDetail: document.getElementById("error-detail"),
   errorRestart: document.getElementById("btn-error-restart"),
+  openWebui: document.getElementById("btn-open-webui"),
   restart: document.getElementById("btn-restart"),
+  stop: document.getElementById("btn-stop"),
   openLogs: document.getElementById("btn-open-logs"),
   footSrc: document.getElementById("foot-src"),
   footVer: document.getElementById("foot-ver"),
@@ -97,6 +99,15 @@ window.addEventListener("DOMContentLoaded", () => {
 
   bindButton(el.restart, "restart_backend");
   bindButton(el.errorRestart, "restart_backend");
+  bindButton(el.stop, "stop_backend");
+  el.openWebui.addEventListener("click", async () => {
+    try {
+      const url = await invoke("open_webui");
+      el.line.textContent = "Open WebUI: " + url;
+    } catch (err) {
+      renderError(err);
+    }
+  });
   el.openLogs.addEventListener("click", async () => {
     try {
       await invoke("open_logs");

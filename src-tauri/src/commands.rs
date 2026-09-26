@@ -6,7 +6,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::backend::discovery::{self, DoctorReport};
-use crate::backend::{BackendSource, StatusSnapshot};
+use crate::backend::{BackendSource, LaunchSpec, StatusSnapshot};
 use crate::config::AppConfig;
 use crate::ManagedState;
 
@@ -157,7 +157,10 @@ pub fn apply_discovery(state: &ManagedState) -> (discovery::BackendDescriptor, b
     let cmd = if d.command.is_empty() {
         None
     } else {
-        Some((d.command[0].clone(), d.command[1..].to_vec()))
+        Some(LaunchSpec {
+            command: d.command.clone(),
+            env: d.extra_env(),
+        })
     };
     state.manager.lock().unwrap().set_command_override(cmd);
     let real = d.is_real();
@@ -191,6 +194,7 @@ pub fn backend_doctor(state: State<'_, ManagedState>) -> DoctorReport {
         executable_path: d.executable_path,
         source: d.source.as_str().into(),
         version: d.version,
+        static_path: d.static_path,
         port: cfg.port(),
         running,
         healthy,
@@ -235,4 +239,40 @@ fn open_in_default_viewer(path: &str) -> Result<(), String> {
             .map(|_| ())
             .map_err(|e| format!("failed to open log {path}: {e}"))
     }
+}
+
+
+/// Open the running backend's WebUI — 方案 A: the backend serves the bundled
+/// static dist (STATIC_PATH), and the desktop loads it in a dedicated webview
+/// window. Kept separate from the control shell so the user has both.
+#[tauri::command]
+pub fn open_webui(
+    app: AppHandle,
+    state: State<'_, ManagedState>,
+) -> Result<String, String> {
+    let port = state.manager.lock().unwrap().port();
+    if !state.manager.lock().unwrap().is_running() {
+        return Err(format!("backend 未运行(port {port})，无法打开 WebUI — 请先启动 backend"));
+    }
+    let base = format!("http://127.0.0.1:{port}/");
+    let url: tauri::Url = base.parse().map_err(|e| format!("bad url {base}: {e}"))?;
+    match app.get_webview_window("webui") {
+        Some(win) => win
+            .navigate(url)
+            .map_err(|e| format!("navigate WebUI: {e}"))?,
+        None => {
+            tauri::WebviewWindowBuilder::new(
+                &app,
+                "webui",
+                tauri::WebviewUrl::External(url),
+            )
+            .title("PixivFlow")
+            .inner_size(1100.0, 780.0)
+            .min_inner_size(720.0, 520.0)
+            .build()
+            .map_err(|e| format!("open WebUI window: {e}"))?;
+        }
+    }
+    state.log.info(&format!("opened WebUI at {base}"));
+    Ok(base)
 }

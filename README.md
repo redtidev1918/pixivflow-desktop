@@ -32,18 +32,22 @@ contains and updates it.
   `/api/health` probe and pushed to the UI via the `backend-status` event.
 - **Configuration** — reads `desktop-config.json` (auto-created with defaults)
   for backend port, auto-start, and command override.
-- **WebUI integration** — the foundation for opening `pixivflow-webui` once the
-  backend is healthy (wired in a later phase).
+- **WebUI integration (方案 A)** — the desktop opens the bundled WebUI directly
+  over `http://127.0.0.1:{port}/`, served by the backend via `STATIC_PATH` (no
+  second frontend). A dedicated `webui` window is created/reused on demand.
 
-## Status (F1.1 — Bootstrap UI)
+## Status (F2.2 — Bundled runtime + WebUI integration)
 
-Runnable Tauri 2 shell with a real startup experience: launches a window, reads
-`desktop-config.json`, starts the backend, health-checks `/api/health` and stops
-it gracefully on window close. The white-screen defect is fixed (relative Vite
-`base` + defensive frontend error handling), and the mock backend ships as the
-health stand-in for development tests; integration with the real PixivFlow
-runtime is Phase 2. See [docs/ROADMAP.md](/docs/ROADMAP.md) for the full phase
-plan and [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
+Runnable Tauri 2 shell that discovers and supervises a **bundled** backend
+(`resources/runtime/pixivflow/`, described by `runtime-manifest.json`) and opens
+the **bundled WebUI** (`resources/webui/dist`) served by that backend — 方案 A.
+Discovery precedence keeps a shipped install stable: bundled → config → PATH →
+dev mock fallback. Core `BackendManager` stays a pure lifecycle owner. The
+control shell shows backend status / port / PID / health / source / version and
+offers **打开 PixivFlow** (open WebUI), Restart, Stop, Open Logs. A versioned
+`dev-backend.mjs` stand-in proves the full bundled contract until the real
+release binary is wired (F2.3). See [docs/ROADMAP.md](/docs/ROADMAP.md) for the
+full phase plan and [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
 
 ## Architecture
 
@@ -98,15 +102,17 @@ automatic upgrade flow.
 
 ## Project status
 
-**F1.1 — Bootstrap UI.** F0 (foundation skeleton) → F1 (Desktop Shell MVP) →
-F1.1 (boot experience, white-screen fix, product naming). The current build is a
-runnable Tauri 2 desktop app that launches a branded bootstrap UI and manages the
-local backend lifecycle against a bundled mock backend.
+**F2.2 — Bundled runtime + WebUI integration (方案 A).** F0 (foundation) → F1
+(Desktop Shell MVP) → F1.1 (boot experience, white-screen fix, product naming)
+→ F2.1 (real backend adapter/discovery/doctor) → F2.2 (bundled runtime via
+`runtime-manifest.json`, discovery precedence bundled→config→PATH→mock, 方案 A
+WebUI served by the backend over `STATIC_PATH`, `open_webui` window). The
+current build manages the local backend lifecycle against the bundled
+dev-stand-in runtime and opens its served WebUI.
 
-Not yet available (intentionally, phases F2–F5): real PixivFlow runtime
-installation/bundling, auto-update, and one-click deployment — the WebUI
-integration and release pipelines come after the backend is proven manageable
-from the desktop.
+Still ahead (phases F2.3–F5): swapping the dev stand-in for the real release
+binary, auto-update, and one-click deployment — done after the bundled-manage
+story is proven from the desktop.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased plan (F0 → F5).
 

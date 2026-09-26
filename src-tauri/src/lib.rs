@@ -105,6 +105,7 @@ pub fn run() {
             commands::restart_backend,
             commands::backend_doctor,
             commands::open_logs,
+            commands::open_webui,
         ])
         .setup(|app| {
             // 1. config

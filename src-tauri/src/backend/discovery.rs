@@ -1,19 +1,21 @@
-//! Real-backend discovery (F2.1) — resolves WHICH backend executable to run.
+//! Real-backend discovery — resolves WHICH backend executable to run.
 //!
-//! Priority (highest first), per the F2.1 spec:
-//!   1. bundled `runtime/` (shipped inside the app bundle / repo runtime dir)
-//!   2. user-configured path (`backend.command` / `backend.args`)
+//! Priority (highest first), per the F2.2 spec (bundled first so a user install
+//! is never perturbed by a stray `pixivflow` on PATH / in config):
+//!   1. bundled `resources/runtime/pixivflow/` (described by `runtime-manifest.json`)
+//!   2. user-configured path (`backend.command` / `backend.args`)   [user override]
 //!   3. `pixivflow` found on `PATH`
-//!   4. fallback: the bundled **mock** backend (dev/test stand-in)
+//!   4. fallback: the bundled **mock** backend (dev/test stand-in only)
 //!
 //! This module only *discovers and describes* a command — it does NOT touch the
 //! process. The actual spawn/stop/health lifecycle stays in `BackendManager`.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
 
@@ -21,11 +23,11 @@ use crate::config::AppConfig;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendSource {
-    /// Shipped inside the app/bundle `resources/runtime/`.
+    /// Shipped inside the app/bundle `resources/runtime/pixivflow/`.
     Bundled,
     /// Explicitly configured via `backend.command` (+`args`).
     Config,
-    /// Found on `PATH` as `pixivflow`.
+    /// Found on `PATH` as `pixivflow` (can shadow nothing when bundled exists).
     Path,
     /// The dev/test mock backend (not a real PixivFlow).
     Mock,
@@ -48,6 +50,42 @@ impl BackendSource {
     }
 }
 
+/// The F2.2.1 runtime-manifest contract for a bundled backend.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeManifest {
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub platform: String,
+    /// argv (relative paths resolved against the runtime dir).
+    pub command: Vec<String>,
+    #[serde(default = "default_health")]
+    pub health: String,
+    /// Whether this backend can serve the WebUI over STATIC_PATH (方案 A).
+    #[serde(default)]
+    pub serves_webui: bool,
+}
+
+fn default_health() -> String {
+    "/api/health".into()
+}
+
+/// A resolved bundled backend (manifest parsed + path-resolved + ready to run).
+#[derive(Debug, Clone)]
+pub struct BundledRuntime {
+    pub manifest: RuntimeManifest,
+    /// Absolute path of `resources/runtime/pixivflow/`.
+    pub dir: PathBuf,
+    /// argv with any relative path absolutized against `dir`.
+    pub command: Vec<String>,
+    /// Absolute path of the actual entry file (for `exe` display / `--version`).
+    pub executable_path: Option<String>,
+    /// Absolute path of the bundled WebUI dist ("" when the backend can't serve it).
+    pub static_path: Option<String>,
+}
+
 /// A resolved backend command: the full argv to spawn plus provenance metadata.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,15 +93,27 @@ pub struct BackendDescriptor {
     pub source: BackendSource,
     /// Absolute/relative executable path when a REAL backend was found.
     pub executable_path: Option<String>,
-    /// Full argv (`argv[0]` = executable). Always non-empty.
+    /// Full argv (`argv[0]` = executable). Always non-empty for real sources.
     pub command: Vec<String>,
     /// Probe result of `argv --version` (real backends only).
     pub version: Option<String>,
+    /// If the backend serves the bundled WebUI (方案 A), the STATIC_PATH to pass.
+    pub static_path: Option<String>,
+    /// True when the resolved backend serves the WebUI over STATIC_PATH.
+    pub serves_webui: bool,
 }
 
 impl BackendDescriptor {
     pub fn is_real(&self) -> bool {
         self.source.is_real()
+    }
+    /// The extra env to inject when spawning (STATIC_PATH for 方案 A, else empty).
+    pub fn extra_env(&self) -> BTreeMap<String, String> {
+        let mut env = BTreeMap::new();
+        if let Some(p) = self.static_path.as_ref() {
+            env.insert("STATIC_PATH".into(), p.clone());
+        }
+        env
     }
 }
 
@@ -71,60 +121,168 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Resolve the backend command to run, applying the spec's priority order.
 pub fn discover(config: &AppConfig) -> BackendDescriptor {
-    // 1) bundled `resources/runtime/`
-    if let Some(exe) = bundled_runtime() {
+    // 1) bundled `resources/runtime/pixivflow/` (manifest-described)
+    if let Some(br) = bundled_runtime() {
         return BackendDescriptor {
             source: BackendSource::Bundled,
-            executable_path: Some(exe.display().to_string()),
-            version: Some("bundled".into()), // filled by probe where possible
-            command: vec![exe.display().to_string()],
+            executable_path: br.executable_path,
+            command: br.command,
+            version: Some(br.manifest.version),
+            static_path: br.static_path,
+            serves_webui: br.manifest.serves_webui,
         };
     }
-    // 2) user-configured command
-    if !config.backend.command.trim().is_empty() {
-        let mut command = vec![config.backend.command.clone()];
-        command.extend(config.backend.args.iter().cloned());
+    // 2) user-configured command (user override)
+    let cfg_cmd = command_from_config(config);
+    if let Some(argv) = cfg_cmd {
         return BackendDescriptor {
             source: BackendSource::Config,
-            executable_path: Some(config.backend.command.clone()),
+            executable_path: Some(argv[0].clone()),
+            command: argv,
             version: None,
-            command,
+            static_path: None,
+            serves_webui: false,
         };
     }
     // 3) PATH
     if let Some(exe) = find_in_path("pixivflow") {
         return BackendDescriptor {
             source: BackendSource::Path,
-            executable_path: Some(exe.to_string()),
-            version: None,
+            executable_path: Some(exe.clone()),
             command: vec![exe],
+            version: None,
+            static_path: None,
+            serves_webui: false,
         };
     }
-    // 4) fallback: bundled mock backend (dev/test)
+    // 4) fallback: bundled mock backend (dev/test stand-in ONLY)
     if let Some(mock) = mock_script() {
         return BackendDescriptor {
             source: BackendSource::Mock,
             executable_path: Some(mock.display().to_string()),
-            version: None,
             command: vec!["node".into(), mock.display().to_string()],
+            version: None,
+            static_path: None,
+            serves_webui: false,
         };
     }
     BackendDescriptor {
         source: BackendSource::NotFound,
         executable_path: None,
-        version: None,
         command: Vec::new(),
+        version: None,
+        static_path: None,
+        serves_webui: false,
     }
 }
 
-/// Look for the real bundled backend under `resources/runtime/`.
-fn bundled_runtime() -> Option<PathBuf> {
-    let exe = if cfg!(windows) { "pixivflow.exe" } else { "pixivflow" };
-    let candidates = [
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/runtime").join(exe),
-        PathBuf::from("src-tauri/resources/runtime").join(exe),
-    ];
-    candidates.into_iter().find(|p| p.is_file())
+/// Build the config-provided argv, or None when `backend.command` is empty.
+fn command_from_config(config: &AppConfig) -> Option<Vec<String>> {
+    if config.backend.command.trim().is_empty() {
+        return None;
+    }
+    let mut command = vec![config.backend.command.clone()];
+    command.extend(config.backend.args.iter().cloned());
+    Some(command)
+}
+
+/// Resolve the bundled backend under `resources/runtime/pixivflow/`.
+///
+/// New-style: reads `runtime-manifest.json` inside the dir. Legacy fallback:
+/// a bare `pixivflow`/`pixivflow.exe` executable directly under `runtime/`.
+fn bundled_runtime() -> Option<BundledRuntime> {
+    let dir = bundled_dir()?; // runtime dir → runtime/pixivflow dir
+    if !dir.is_dir() {
+        return None;
+    }
+    // (a) manifest-described backend
+    let manifest_path = dir.join("runtime-manifest.json");
+    if manifest_path.is_file() {
+        if let Ok(text) = std::fs::read_to_string(&manifest_path) {
+            if let Ok(manifest) = serde_json::from_str::<RuntimeManifest>(&text) {
+                if !manifest.command.is_empty() {
+                    let (command, exe) = resolve_argv(&dir, &manifest.command);
+                    let static_path = if manifest.serves_webui {
+                        static_webui_path()
+                    } else {
+                        None
+                    };
+                    return Some(BundledRuntime {
+                        dir,
+                        manifest,
+                        command,
+                        executable_path: exe,
+                        static_path,
+                    });
+                }
+            }
+        }
+    }
+    // (b) legacy bare executable under `runtime/`
+    let exe_name = if cfg!(windows) { "pixivflow.exe" } else { "pixivflow" };
+    let bare = dir.join(exe_name);
+    if bare.is_file() {
+        return Some(BundledRuntime {
+            manifest: RuntimeManifest {
+                name: "pixivflow".into(),
+                version: "unknown".into(),
+                platform: String::new(),
+                command: vec![bare.display().to_string()],
+                health: "/api/health".into(),
+                serves_webui: false,
+            },
+            dir,
+            command: vec![bare.display().to_string()],
+            executable_path: Some(bare.display().to_string()),
+            static_path: None,
+        });
+    }
+    None
+}
+
+/// `resources/runtime/pixivflow/` absolute path (from cargo manifest or CWD).
+fn bundled_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/runtime/pixivflow");
+    if dir.is_dir() {
+        return Some(dir);
+    }
+    let alt = PathBuf::from("src-tauri/resources/runtime/pixivflow");
+    if alt.is_dir() {
+        return Some(alt);
+    }
+    None
+}
+
+/// Resolve relative argv entries against `dir`. Returns (argv, entry-file).
+fn resolve_argv(dir: &Path, raw: &[String]) -> (Vec<String>, Option<String>) {
+    let mut argv: Vec<String> = Vec::with_capacity(raw.len());
+    let mut exe: Option<String> = None;
+    for elem in raw {
+        let has_sep = elem.contains('/') || elem.contains('\\');
+        let joined = dir.join(elem);
+        if has_sep && joined.is_file() {
+            argv.push(joined.display().to_string());
+            if exe.is_none() {
+                exe = Some(joined.display().to_string());
+            }
+        } else {
+            argv.push(elem.clone());
+        }
+    }
+    (argv, exe)
+}
+
+/// Absolute path of the bundled WebUI dist, if present (方案 A STATIC_PATH).
+pub fn static_webui_path() -> Option<String> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/webui/dist");
+    if dir.is_dir() {
+        return Some(dir.display().to_string());
+    }
+    let alt = PathBuf::from("src-tauri/resources/webui/dist");
+    if alt.is_dir() {
+        return Some(alt.display().to_string());
+    }
+    None
 }
 
 /// Search PATH for a command name (case-insensitive on Windows).
@@ -203,7 +361,6 @@ pub fn probe_version(argv: &[String]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-
 /// The `backend_doctor` command report: what was discovered + current runtime.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -216,6 +373,8 @@ pub struct DoctorReport {
     pub source: String,
     /// `argv --version` probe result (real backends only).
     pub version: Option<String>,
+    /// WebUI dist the backend will serve (方案 A), when applicable.
+    pub static_path: Option<String>,
     pub port: u16,
     pub running: bool,
     /// Live health probe while running: Some(true)=200, Some(false)=no-200,
@@ -224,11 +383,11 @@ pub struct DoctorReport {
     pub message: String,
 }
 
-/// Convenience: discover + probe version for real backends.
+/// Convenience: discover + probe version for real backends + set serves_webui.
 pub fn discover_with_version(config: &AppConfig) -> BackendDescriptor {
     let mut d = discover(config);
     if d.is_real() {
-        d.version = probe_version(&d.command);
+        d.version = probe_version(&d.command).or(d.version);
     }
     d
 }

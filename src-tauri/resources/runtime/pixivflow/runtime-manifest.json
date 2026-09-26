@@ -1,0 +1,8 @@
+{
+  "name": "pixivflow",
+  "version": "0.0.0-dev",
+  "platform": "darwin-arm64",
+  "command": ["node", "./dev-backend.mjs"],
+  "health": "/api/health",
+  "servesWebui": true
+}

@@ -7,8 +7,8 @@ rewrite of upstream PixivFlow / webui.
 | Phase | Theme | Scope |
 |---|---|---|
 | **Phase 0 — Foundation** ✅ | Repository skeleton | structure · docs · `desktop-manifest.json` / `desktop-config.json` contracts |
-| **Phase 1 — Shell MVP** ✅ *(current)* | First runnable app | Tauri 2 window · frontend status shell · `BackendManager` (start/stop/restart/health) · config system · single-instance · file logging |
-| **Phase 2 — Real backend integration** 🚧 | Lifecycle | 2.1 adapter+discovery+doctor ✅ · 2.2 download/bundle real backend & webui · `STATIC_PATH` · run locally |
+| **Phase 1 — Shell MVP** ✅ | First runnable app | Tauri 2 window · frontend status shell · `BackendManager` (start/stop/restart/health) · config system · single-instance · file logging |
+| **Phase 2 — Real backend integration** 🚧 | Lifecycle | 2.1 adapter+discovery+doctor ✅ · 2.2 bundled runtime+manifest · 方案 A WebUI (`STATIC_PATH`) · open WebUI ✅ · 2.3 fetch real release binary ⬜ |
 | **Phase 3 — UX** ⬜ | Experience | settings page · log viewer · remote mode · tray icon |
 | **Phase 4 — Distribution** ⬜ | Packaging | GitHub Actions · Windows .exe · macOS .dmg · Linux AppImage |
 | **Phase 5 — Releasegraph** ⬜ | Fleet automation | `desktop-manifest.json` version lock · automated update PR · auto Desktop release |
@@ -64,8 +64,9 @@ PixivFlow backend — resolved, not assumed.
   3. `pixivflow` on `PATH`
   4. fallback: the bundled mock backend (dev/test)
 - **Config shape** — `backend.command` is now a plain string and `backend.args`
-  an array (matches the desktop-config contract):
-  `{ "backend": { "mode": "local", "command": "", "args": [], "port": 3000, "autoStart": true } }`.
+  an array (matches the desktop-config contract; `mode` is **top-level**, not
+  under `backend`):
+  `{ "mode": "local", "backend": { "command": "", "args": [], "port": 3000, "autoStart": true } }`.
 - **BackendManager** — unchanged lifecycle; only gains a tiny adapter wiring
   point `set_command_override()` so the resolved command can be injected.
 - **`backend` doctor command** — reports `backend_found`, `executable_path`,
@@ -79,11 +80,48 @@ PixivFlow backend — resolved, not assumed.
 Live-verified: with `backend.command` set, the app logs `backend resolved:
 source=config … real=true`, spawns it, and `/api/health` → 200.
 
-## Phase 2 — Real backend integration ⬜
+## Phase 2.2 — Bundled runtime + WebUI integration (方案 A) ✅
 
-- Acquire the real backend (downloaded release or local build).
-- Bundle the webui frontend dist and serve it (`STATIC_PATH`).
-- Run real PixivFlow locally via `backend.command` (no Node/Docker requirement for the end user).
+Validates the "ordinary user install & run" story: the shell discovers and
+supervises a **bundled** backend and opens the **bundled WebUI** served by that
+backend — no second frontend, no Node/Python/Docker requirement for the end user.
+
+- **Runtime layout contract** (`src/resources/…`): `runtime/pixivflow/`
+  (`runtime-manifest.json` + `VERSION` + entry), and `webui/dist/` (static
+  WebUI). The manifest declares `{name, version, platform, command[], health,
+  servesWebui}`.
+- **Precedence (F2.2.2)** — discovery now prefers:
+  1. **bundled** runtime (manifest-described) — always wins, so a stray
+     `pixivflow` on PATH / in config can't perturb a shipped install
+  2. user-configured `backend.command` (+ `backend.args`)
+  3. `pixivflow` on `PATH`
+  4. fallback: bundled mock (dev/test)
+- **`LaunchSpec`** — the manager accepts a `{command, env}` override; discovery
+  injects `STATIC_PATH=<resources/webui/dist>` for 方案 A hosting. Core
+  `BackendManager` lifecycle (spawn / stop / restart / health) is untouched.
+- **WebUI serving** — backend serves the static dist over `STATIC_PATH`; the
+  desktop loads `http://127.0.0.1:{port}/` in a dedicated `webui` window via the
+  new `open_webui` command (reused if already open). The Tauri shell stays the
+  *control* surface.
+- **Control UI (F2.2.4)** — the desktop shell shows backend status, port, PID,
+  health, source, version, mode and offers **打开 PixivFlow** (open WebUI),
+  Restart, Stop, Open Logs.
+- **Tests** (`backend_test.rs`, 9): bundled manifest parsing · static path ·
+  precedence over config/PATH · end-to-end `start → health 200 → GET / serves
+  the webui dist → SIGTERM stop` · lifetime round-trips still green.
+- **Dev stand-in** — `runtime/pixivflow/dev-backend.mjs` (versioned
+  `0.0.0-dev`) proves the full bundled contract without shipping real PixivFlow
+  code; the real release binary is wired in F2.3.
+
+Live-verified: default config resolves `source=bundled real=true`, auto-starts
+the bundled backend, `/api/health → 200`, and `GET /` serves the bundled WebUI
+dist.
+
+## Phase 2.3 — Fetch real PixivFlow runtime ⬜
+
+- Acquire the real backend (downloaded release or local build) and drop it into
+  `resources/runtime/pixivflow/` (matching the manifest contract).
+- Bundle the real webui dist into `resources/webui/dist`.
 
 ## Phase 3 — UX ⬜
 

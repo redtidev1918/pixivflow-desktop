@@ -89,6 +89,13 @@ body {
 .btn:hover { border-color: var(--accent); }
 .btn:disabled { opacity: .5; cursor: default; }
 
+/* Primary action: open the PixivFlow WebUI (F2.2.4). */
+.btn-primary {
+  background: var(--accent); border-color: var(--accent); color: #0f1420;
+  font-weight: 600;
+}
+.btn-primary:hover { filter: brightness(1.06); border-color: var(--accent); }
+
 .foot {
   display: flex; gap: 14px; justify-content: center;
   margin-top: 14px; font-size: 11px; color: var(--muted);

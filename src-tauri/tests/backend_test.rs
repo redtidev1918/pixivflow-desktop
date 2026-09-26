@@ -1,9 +1,15 @@
-//! Headless integration test for the F1 BackendManager contract:
-//! start -> health-check -> graceful stop (the "spawn/health/close" chain).
+//! Headless integration tests for the BackendManager contract:
+//! start -> health-check -> graceful stop, PLUS the F2.1/F2.2 adapter behavior
+//! (discovery precedence, runtime-manifest parsing, 方案 A WebUI static hosting).
 
-use pixivflow_desktop::backend::manager::BackendManager;
-use pixivflow_desktop::config::{AppConfig, BackendConfig, RemoteConfig};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::time::Duration;
+
+use pixivflow_desktop::backend::manager::{BackendManager, LaunchSpec};
+use pixivflow_desktop::backend::discovery::{discover, discover_with_version, probe_version};
+use pixivflow_desktop::backend::BackendSource;
+use pixivflow_desktop::config::{AppConfig, BackendConfig, RemoteConfig};
 
 fn config(port: u16) -> AppConfig {
     AppConfig {
@@ -21,6 +27,40 @@ fn config(port: u16) -> AppConfig {
     }
 }
 
+fn config_with_command(port: u16, command: &str, args: Vec<String>) -> AppConfig {
+    let mut c = config(port);
+    c.backend.command = command.into();
+    c.backend.args = args;
+    c
+}
+
+fn mock_path() -> String {
+    String::from(env!("CARGO_MANIFEST_DIR")) + "/resources/mock-backend.mjs"
+}
+
+fn wait_healthy(m: &BackendManager) -> bool {
+    for _ in 0..25 {
+        if m.health_check().unwrap_or(false) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+fn http_get_body(port: u16, path: &str) -> String {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    );
+    s.write_all(req.as_bytes()).unwrap();
+    let mut b = String::new();
+    s.read_to_string(&mut b).unwrap();
+    b
+}
+
+// ---- F1: core lifecycle ------------------------------------------------
+
 #[test]
 fn manager_start_health_stop_roundtrip() {
     let port: u16 = 3317;
@@ -29,101 +69,36 @@ fn manager_start_health_stop_roundtrip() {
     assert!(!m.is_running(), "fresh manager must not be running");
     assert_eq!(m.pid(), None);
 
-    // start
     let pid = m.start().expect("start() should spawn the backend");
     assert!(m.is_running(), "start() should mark the manager running");
     assert!(pid > 0);
-
-    // start must be idempotent -> same pid, no duplicate process
     assert_eq!(m.start().unwrap(), pid, "start() twice must return the same pid");
 
-    // health: poll until the mock answers 200 (bounded to ~5s)
-    let mut became_healthy = false;
-    for _ in 0..25 {
-        if m.health_check().unwrap_or(false) {
-            became_healthy = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    assert!(became_healthy, "backend on port {port} should report /api/health 200");
+    assert!(wait_healthy(&m), "backend on port {port} should report /api/health 200");
 
-    // graceful stop (SIGTERM + wait) -> process reaped, no longer healthy
     m.stop().expect("stop() should terminate gracefully");
     std::thread::sleep(Duration::from_millis(300));
     assert!(!m.is_running(), "after stop() the backend must not be running");
     assert_eq!(m.health_check().unwrap(), false, "after stop() health must read false");
-
-    // stopping again is a no-op (already stopped)
     m.stop().expect("double stop() must be a no-op");
 }
 
 // ---- F2.1: Real Backend Adapter -----------------------------------------
 
-use pixivflow_desktop::backend::discovery::{discover, discover_with_version, probe_version};
-
-fn mock_path() -> String {
-    String::from(env!("CARGO_MANIFEST_DIR")) + "/resources/mock-backend.mjs"
-}
-
-fn config_with_command(port: u16, command: &str, args: Vec<String>) -> AppConfig {
-    let mut c = config(port);
-    c.backend.command = command.into();
-    c.backend.args = args;
-    c
-}
-
-#[test]
-fn adapter_parses_config_command() {
-    // config points the adapter at a real/arbitrary backend command
-    let c = config_with_command(3101, "/opt/pixivflow/bin/pixivflow".into(), vec!["--no-cron".into()]);
-    let d = discover(&c);
-    assert_eq!(d.source, pixivflow_desktop::backend::BackendSource::Config);
-    assert!(d.is_real(), "configured command is a real backend");
-    assert_eq!(d.executable_path.as_deref(), Some("/opt/pixivflow/bin/pixivflow"));
-    // argv = [exe, ...args]
-    assert_eq!(d.command, vec!["/opt/pixivflow/bin/pixivflow", "--no-cron"]);
-}
-
-#[test]
-fn discovery_falls_back_to_nonempty_command() {
-    // empty config must still resolve SOME command (mock fallback or a PATH hit)
-    let d = discover(&config(3102));
-    assert!(
-        !d.command.is_empty(),
-        "empty backend config must resolve to mock fallback or a PATH `pixivflow`"
-    );
-}
-
-#[test]
-fn probe_version_reports_mock_version() {
-    // the mock backend answers `--version` like a real backend would
-    let v = probe_version(&["node".into(), mock_path()]);
-    assert!(v.is_some(), "--version probe should yield a string");
-    let s = v.unwrap();
-    assert!(s.contains("pixivflow"), "mock version should mention pixivflow, got {s:?}");
-}
-
 #[test]
 fn fake_backend_start_health_stop_via_adapter() {
-    // drive a (mock-as-fake) backend through the adapter-injected command,
-    // proving the lifecycle path that a REAL backend uses.
+    // Drive a (mock-as-fake) backend through an adapter-injected LaunchSpec,
+    // proving the lifecycle path a REAL backend uses.
     let port: u16 = 3103;
     let mut m = BackendManager::new(config(port));
-    m.set_command_override(Some(("node".into(), vec![mock_path()])));
+    m.set_command_override(Some(LaunchSpec {
+        command: vec!["node".into(), mock_path()],
+        env: Default::default(),
+    }));
 
-    let _pid = m.start().expect("adapter command should spawn the fake backend");
+    m.start().expect("adapter command should spawn the fake backend");
     assert!(m.is_running());
-
-    let mut healthy = false;
-    for _ in 0..25 {
-        if m.health_check().unwrap_or(false) {
-            healthy = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    assert!(healthy, "fake backend on port {port} should answer /api/health 200");
+    assert!(wait_healthy(&m), "fake backend on port {port} should answer /api/health 200");
 
     m.stop().expect("graceful stop should work through the adapter command");
     std::thread::sleep(Duration::from_millis(300));
@@ -131,9 +106,93 @@ fn fake_backend_start_health_stop_via_adapter() {
 }
 
 #[test]
-fn doctor_report_components_resolve_for_configured_backend() {
-    let c = config_with_command(3104, "node".into(), vec![mock_path()]);
-    let d = discover_with_version(&c);
+fn config_command_launches_when_no_adapter_override() {
+    // BackendManager resolves config.backend.command when discovery hasn't set
+    // an override (user "direct" path, independent of bundled/PATH precedence).
+    let port: u16 = 3106;
+    let mut m = BackendManager::new(config_with_command(port, "node", vec![mock_path()]));
+    let pid = m.start().unwrap();
+    assert!(pid > 0);
+    assert!(m.is_running());
+    assert!(wait_healthy(&m), "config command backend should be healthy");
+    m.stop().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!m.is_running());
+}
+
+// ---- F2.2: Bundled runtime (manifest) + precedence + 方案 A WebUI ----------
+
+#[test]
+fn bundled_takes_precedence_over_config_and_path() {
+    // F2.2.2: even when config names a command (or PATH carries another
+    // `pixivflow`), the bundled runtime must win so a stray binary can't
+    // perturb a shipped install.
+    let c = config_with_command(3105, "/opt/fake/pixivflow".into(), Vec::new());
+    let d = discover(&c);
+    assert_eq!(d.source, BackendSource::Bundled, "bundled must shadow config");
     assert!(d.is_real());
-    assert!(d.version.is_some(), "doctor needs a version for a configured backend");
+    assert!(d.serves_webui, "dev stand-in declares 方案 A WebUI hosting");
+    let exe = d.executable_path.as_deref().expect("bundled exe path");
+    assert!(exe.contains("dev-backend.mjs"), "bundled entry is the dev stand-in");
+}
+
+#[test]
+fn bundled_manifest_provides_static_webui_path() {
+    let d = discover(&config(3108));
+    assert_eq!(d.source, BackendSource::Bundled);
+    let sp = d.static_path.as_deref().expect("static_path for bundled webui");
+    assert!(sp.contains("webui/dist"), "STATIC_PATH should point at webui/dist, got {sp:?}");
+    // manifest version is the probe-able source of truth
+    let v = probe_version(&d.command);
+    assert!(v.as_ref().is_some_and(|s| s.contains("0.0.0-dev")), "bundled --version, got {v:?}");
+}
+
+#[test]
+fn bundled_runtime_serves_webui_static_and_stops() {
+    // End-to-end 方案 A: the bundled backend serves the bundled WebUI dist over
+    // STATIC_PATH and answers health; it must stop gracefully (SIGTERM).
+    let port: u16 = 3110;
+    let d = discover(&config(port));
+    assert_eq!(d.source, BackendSource::Bundled);
+
+    let mut m = BackendManager::new(config(port));
+    m.set_command_override(Some(LaunchSpec {
+        command: d.command.clone(),
+        env: d.extra_env(),
+    }));
+    m.start().unwrap();
+    assert!(wait_healthy(&m), "bundled backend should be healthy on {port}");
+
+    // 方案 A: GET / serves the bundled webui index (not the control UI).
+    let body = http_get_body(port, "/");
+    assert!(body.starts_with("HTTP/1.1 200"), "GET / should be 200, got {body:?}");
+    assert!(body.contains("PixivFlow WebUI"), "static webui index must be served");
+
+    m.stop().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!m.is_running(), "bundled backend must stop via SIGTERM");
+}
+
+// -- discovery fallback / doctor ------------------------------------------
+
+#[test]
+fn discovery_falls_back_to_nonempty_command() {
+    let d = discover(&config(3102));
+    assert!(!d.command.is_empty(), "must resolve bundled/mock/path to a command");
+}
+
+#[test]
+fn probe_version_reports_mock_version() {
+    let v = probe_version(&["node".into(), mock_path()]);
+    assert!(v.is_some(), "--version probe should yield a string");
+    assert!(v.unwrap().contains("pixivflow"));
+}
+
+#[test]
+fn doctor_resolves_bundled_runtime_and_version() {
+    let d = discover_with_version(&config(3104));
+    assert_eq!(d.source, BackendSource::Bundled);
+    assert!(d.is_real());
+    let v = d.version.as_deref().expect("doctor needs a version");
+    assert!(v.contains("0.0.0-dev"), "bundled version should surface, got {v:?}");
 }
