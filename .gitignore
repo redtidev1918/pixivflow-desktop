@@ -1,16 +1,20 @@
-# Build / dependency artifacts
+# Dependencies / build artifacts
 node_modules/
 src-tauri/target/
-src-tauri/gen/schemas/
-src-tauri/gen/android/
-src-tauri/gen/apple/
+src-tauri/gen/
 
-# Bundled upstream outputs (filled by `npm run bundle`)
+# Bundled upstream outputs (filled from Phase 2)
 src-tauri/resources/backend/dist/
 src-tauri/resources/backend/node_modules/
 src-tauri/resources/webui/*
-# but keep the placeholder .gitkeep files so the dirs exist in a fresh checkout
+# keep placeholder .gitkeep dirs for a fresh checkout
 !**/.gitkeep
 
+# Logs
 *.log
+
+# OS / editor
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/

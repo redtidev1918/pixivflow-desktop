@@ -1,83 +1,55 @@
 # Roadmap
 
-PixivFlow Desktop is the desktop shell of the PixivFlow ecosystem
-(**PixivFlow backend** + **pixivflow-webui**, orchestrated by **releasegraph**).
-The goal is a tightly-scoped, maintainable launcher — never a rewrite of its
-components. Each phase is independently releasable and gated by CI + releasegraph.
+PixivFlow Desktop is the **desktop shell** of the PixivFlow ecosystem. Every phase
+below is independently releasable; each keeps the desktop a thin shell and never a
+rewrite of upstream PixivFlow / webui.
 
-## Legend
+| Phase | Theme | Scope |
+|---|---|---|
+| **Phase 0 — Foundation** ✅ *(current)* | Repository skeleton | repository structure · documentation · `desktop-manifest.json` config/version contracts |
+| **Phase 1 — Shell MVP** ⬜ | First runnable app | Tauri window · frontend shell |
+| **Phase 2 — Backend integration** ⬜ | Lifecycle | `BackendManager` · start · stop · health check |
+| **Phase 3 — Packaging** ⬜ | Distribution | Windows installer · macOS dmg · Linux AppImage |
+| **Phase 4 — Update system** ⬜ | Updates | Tauri updater |
+| **Phase 5 — Releasegraph integration** ⬜ | Fleet automation | dependency graph · automated update PR |
 
-- ✅ shipped (foundation) · ⬜ planned · 🧪 experimental
+## Phase 0 — Foundation ✅ (current)
 
-## F0 — Foundation ✅
+- Repository structure.
+- Documentation.
+- `desktop-manifest.json` version-lock contract.
 
-- Repository skeleton per the approved structure.
-- MIT license, README, architecture/dev docs, roadmap, contributing & security
-  guidelines, issue/PR templates.
-- `desktop-manifest.json` component lock (`schemaVersion` 1) for the
-  releasegraph-driven upgrade flow.
-- `desktop-config.json` example config reference.
+Nothing is runnable yet — no Tauri project, no Rust, no business logic.
 
-## F1 — Shell MVP ⬜
+## Phase 1 — Shell MVP ⬜
 
-- Tauri main window + `BackendManager` skeleton (`start` / `stop` / `restart` /
-  `healthCheck` commands and events).
-- Minimal splash / error shell UI (`src/frontend`).
-- Loopback same-origin load of the bundled WebUI once the backend is healthy.
+- Tauri main window.
+- Frontend shell.
 
-## F2 — Local integration ⬜
+## Phase 2 — Backend integration ⬜
 
-- Bundle `PixivFlow` + `pixivflow-webui` per `desktop-manifest.json`.
-- Launch backend with `STATIC_PATH` → bundled WebUI; same-origin `/api` +
-  `/socket.io`, zero CORS, zero upstream changes.
-- Robustness: port reuse/occupancy detection, duplicate-instance adoption,
-  crash detection and recovery (graceful SIGTERM first — never `kill -9` first).
+- `BackendManager`.
+- `start` / `stop` / health check.
 
-## F3 — Configuration & remote mode ⬜
+## Phase 3 — Packaging ⬜
 
-- `desktop-config.json` read/write surfaced in a small settings window.
-- `remote` mode: load an existing PixivFlow WebUI URL without a local backend
-  (keeps Docker/host-deployed users intact).
+- Windows installer (.exe).
+- macOS dmg.
+- Linux AppImage.
 
-## F4 — Distribution ⬜
+## Phase 4 — Update system ⬜
 
-- Proper icon set; code signing & macOS notarization (self-signed fallback with
-  a clear warning where not configured).
-- Multi-platform installers: Windows `.exe`, macOS `.dmg`, Linux `.AppImage`.
+- Tauri updater (GitHub Releases).
 
-## F5 — Automatic updates ⬜
+## Phase 5 — Releasegraph integration ⬜
 
-- Tauri updater reading **GitHub Releases** (no self-hosted updater server).
-- Signed update payloads alongside release assets.
-- Update UX: notify → download → apply → relaunch.
-
-## F6 — releasegraph integration ⬜
-
-- Add `pixivflow-desktop` to `releasegraph/fleet.yaml`.
-- Add `.release-policy.yml` + `release.yml` (a pinned call to the shared
-  `reusable-release.yml`, mirroring sibling repos — no forking of stable workflows).
-- Upstream component bump → merge-queue **upgrade PR** (`build.test` gate) →
-  breaking/migration detection routes to human → on merge, the desktop's own
-  standard release pipeline produces installers + updater payload.
-- Tauri updater validates against the released asset signatures.
-
-## F7 — v1.0 polish ⬜
-
-- `CHANGELOG.md` discipline (semantic versions per
-  [Keep a Changelog](https://keepachangelog.com/)).
-- Signed releases across all three platforms, end-to-end auto-update verified.
-- Documentation polish and maintainability review.
-
----
+- Add to the releasegraph dependency graph.
+- Automated update PR when an upstream component releases.
 
 ## Design constraints (non-negotiable)
 
 1. **Stay a shell** — never copy or re-implement PixivFlow / webui logic.
-2. **Don't modify upstream** — the desktop uses env vars (`PORT`, `HOST`,
-   `STATIC_PATH`, `PIXIV_DATABASE_PATH`, `PIXIV_DOWNLOAD_DIR`, …), not patches.
-3. **No new microservices** — the desktop, its subprocesses, and releasegraph
-   are the whole topology.
-4. **Don't fork releasegraph** — build on its primitives (fleet, policy,
-   reusable workflows, postRelease).
-5. **Never auto-publish untested versions** — every release passes the build
-   gate before it reaches installers.
+2. **Don't modify upstream** — configure the backend via env overrides, not patches.
+3. **No new microservices.**
+4. **Don't fork releasegraph** — build on its primitives.
+5. **Never auto-publish untested versions.**

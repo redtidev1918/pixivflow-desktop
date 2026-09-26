@@ -9,11 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Repository foundation: MIT license, README, architecture & development docs,
-  roadmap, contribution/security guidelines.
-- `desktop-manifest.json` component version lock (schemaVersion 1) for the
+- Repository foundation: MIT license, README, architecture / development /
+  roadmap / release / relationship docs, contribution & security guidelines,
+  issue / PR templates.
+- `desktop-manifest.json` — component version lock (`schemaVersion` 1) for the
   releasegraph-driven auto-upgrade flow.
-- `desktop-config.json` example configuration reference.
+- `desktop-config.example.json` — documented example config (`local` / `remote`
+  modes).
+
+### Changed
+
+- F0 scoped to **repository skeleton only**: removed the pre-spec Rust / Tauri
+  scaffolding and bundling scripts so the Foundation stage stays a pure,
+  public-ready structure with **no business logic** (per the F0 definition).
 
 ## [0.1.0] - 2026-09-26
 

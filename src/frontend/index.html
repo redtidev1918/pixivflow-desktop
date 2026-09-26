@@ -13,38 +13,20 @@
       background: #f5f7fb; color: #1c2430;
     }
     .card {
-      max-width: 460px; margin: 24px; padding: 36px 28px; text-align: center;
-      background: #fff; border-radius: 14px; box-shadow: 0 10px 34px rgba(15,23,42,.10);
+      max-width: 420px; margin: 24px; padding: 36px 28px; text-align: center;
+      background: #fff; border-radius: 14px;
+      box-shadow: 0 10px 34px rgba(15, 23, 42, .10);
     }
-    .spinner {
-      width: 38px; height: 38px; margin: 0 auto 18px; border-radius: 50%;
-      border: 4px solid rgba(99,102,241,.18); border-top-color: #6366f1;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
     h1 { font-size: 20px; margin: 0 0 8px; }
-    p  { font-size: 13.5px; color: #5b6472; line-height: 1.5; margin: 0 0 6px; }
+    p  { font-size: 13.5px; color: #5b6472; line-height: 1.5; margin: 0; }
     code { background: #eef1f8; padding: 1px 6px; border-radius: 6px; font-size: 12px; }
-    .err { color: #b42318; }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="spinner" id="spin"></div>
     <h1>PixivFlow Desktop</h1>
-    <p id="msg">正在启动本地 PixivFlow 后端…</p>
-    <p id="hint" style="display:none">
-      若长时间无反应，请查看桌面日志
-      <code>&lt;dataDir&gt;/logs/pixivflow-desktop.log</code>。
-    </p>
+    <p>静态壳页（F0 骨架占位）。真 UI 由内置 <code>pixivflow-webui</code>
+      经本地 PixivFlow 后端同源提供，将在 Phase 1–2 接入。</p>
   </div>
-  <script>
-    // Fallback/error shell. The real UI is the bundled PixivFlow WebUI served by
-    // the local backend; when this page is shown it means backend startup failed
-    // or autoStart is disabled. Show the detail in the window title if any.
-    window.setTimeout(function () {
-      document.getElementById('hint').style.display = 'block';
-    }, 12000);
-  </script>
 </body>
 </html>

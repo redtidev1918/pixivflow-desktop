@@ -1,85 +1,41 @@
-# Contributing to PixivFlow Desktop
+# Contributing
 
-Thanks for your interest in contributing. This project is a **desktop shell** —
-a thin, cross-platform launcher around the existing PixivFlow backend and
-`pixivflow-webui`. Keeping it thin is a design goal, and the whole ecosystem is
-orchestrated by [releasegraph](https://github.com/redtidev1918/releasegraph).
-Read this before opening a PR.
+Thanks for contributing to **PixivFlow Desktop** — the desktop shell of the
+PixivFlow ecosystem.
 
-## First: understand the boundary
+This project is intentionally a **thin shell**. Please keep that in mind.
 
-| Do                                | Don't                            |
-| --------------------------------- | -------------------------------- |
-| Manage backend lifecycle, config  | Re-implement PixivFlow logic     |
-| Render the bundled WebUI          | Modify `pixivflow-webui` source  |
-| Add shell UI (splash/settings)    | Copy upstream code into this repo |
-| Wire release/updates via releasegraph | Fork or rewrite stable workflows |
+## Issue rules
 
-If your change would duplicate business logic or touch an upstream repo through
-this one, step back and discuss it in the issue first.
+- Search existing issues before opening a new one.
+- Use the issue templates (`bug report` / `feature request`) when they apply.
+- Include reproduction steps for bugs: OS/version, what you ran, expected vs
+  actual.
+- Report security issues privately via [SECURITY.md](SECURITY.md) — not in a
+  public issue.
 
-## Setup
+## PR rules
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full environment setup.
+- Keep changes **small and focused**. One logical change per PR.
+- **No large refactors.** If a change rewrites a subsystem, discuss it first.
+- **Keep compatibility with PixivFlow**: the desktop must not break existing
+  PixivFlow / webui / Docker / deploy workflows. Call this out explicitly in the
+  PR's `## Compatibility` section.
+- **No business logic** in the desktop. Business logic lives upstream in
+  PixivFlow.
+- The desktop must never fork, rebundle or re-implement upstream source.
+- Do **not** bump `desktop-manifest.json` ad-hoc — version bumps belong to
+  release / upgrade PRs.
+- Update docs if behavior changes.
+- Add a `CHANGELOG.md` entry under `[Unreleased]` for user-facing changes.
+- Every PR must pass CI (when CI exists) before merge.
 
-```bash
-git clone https://github.com/redtidev1918/pixivflow-desktop.git
-cd pixivflow-desktop
-npm install          # installs @tauri-apps/cli
-# build the bundled upstream assets (requires the sibling repos / $PIXIVFLOW_DIR):
-npm run bundle
-npm run dev          # or: npm run build
-```
+## Process
 
-> You need a Rust toolchain (`rustup`, `rust-toolchain.toml` honoured) and the
-> platform system dependencies for Tauri 2. See the Tauri prerequisites guide.
+1. Open an issue or grab one.
+2. Branch from `main`.
+3. Make your change + docs.
+4. Open a PR using the PR template.
+5. Address review; merge after approval and green checks.
 
-## Development workflow
-
-- `main` is the single stable branch. Feature branches are welcome; keep PRs small.
-- Every PR should reference an issue and describe what it changes and why.
-- Add or update docs alongside behavior changes.
-- `desktop-manifest.json` bumps and `CHANGELOG.md` are handled through release
-  PRs, **not** ad-hoc commits — component pins are release-critical.
-
-## Commit conventions
-
-We use [Conventional Commits](https://www.conventionalcommits.org/).
-
-- `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`, `build:`, `ci:`
-
-Examples:
-
-```
-feat(backend): add restart timeout config
-fix: stop backend on window close before exit
-docs: document remote mode
-```
-
-## Code style
-
-- Rust: run `cargo fmt` and keep `cargo clippy -- -D warnings` clean.
-- TS/JS shell UI: keep it minimal and dependency-free where possible.
-- Prefer the smallest change that keeps the shell thin.
-
-## Testing
-
-- Run `cargo check` / `cargo test` for the Rust side where feasible.
-- Shell UI is intentionally minimal; manual launch checks in `tauri dev` are the
-  baseline for F0–F2.
-- Release/CI build verification runs on the GitHub Actions matrix.
-
-## Release process
-
-Releases are driven by releasegraph:
-
-1. An upstream (`PixivFlow` / `pixivflow-webui`) or the desktop itself releases.
-2. `desktop-manifest.json` is bumped and a merge-queue upgrade PR is opened.
-3. After the gate passes and the PR merges, the desktop's own release pipeline
-   builds the `.exe` / `.dmg` / `.AppImage` and publishes to GitHub Releases.
-
-Feel free to open an issue if the flow looks off or is under-documented.
-
-## Code of conduct
-
-Be respectful and constructive. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+We value **simple, stable, compatible-first** contributions.

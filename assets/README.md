@@ -1,14 +1,9 @@
 # assets
 
-Source/branding assets live here. Build-critical platform icons are **generated**
-into `src-tauri/icons/` by Tauri and are not edited by hand — regenerate them
-from the master source:
+Source / branding assets for PixivFlow Desktop.
 
-```bash
-npm run icon   # tauri icon assets/icon.png  -> writes src-tauri/icons/
-```
+At **F0** this directory only carries this README. Platform icons (`src-tauri/icons/`)
+are **generated** by Tauri from a master source when the shell is scaffolded
+(Phase 1 onward) and are not authored here by hand.
 
-| Path | Purpose |
-|---|---|
-| `icon.png` | Master app icon. `tauri icon` derives all platform formats (icns/ico/ico sets) from it. |
-| *(future)* | dmg background, installer banners, README banner art. |
+Future assets: app icon master, dmg background, installer banners, README banner.

@@ -1,0 +1,16 @@
+{
+  "mode": "local",
+
+  "backend": {
+    "port": 3000,
+    "autoStart": true
+  },
+
+  "dataDir": "",
+  "downloadDir": "",
+  "logDir": "",
+
+  "remote": {
+    "url": ""
+  }
+}
