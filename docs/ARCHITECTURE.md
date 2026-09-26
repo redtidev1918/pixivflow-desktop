@@ -125,8 +125,22 @@ version, static_path, serves_webui}`) is injected into the manager via
 `LaunchSpec` carries the extra env (`STATIC_PATH=<resources/webui/dist>`) needed
 for 方案 A WebUI serving. The manager's own fallback (config `command` → mock) is
 unchanged. The `backend_doctor` Tauri command surfaces the same resolution plus
-live runtime status (`running` / `healthy`), with `version` probed by running
-`<command> --version` under a timeout.
+live runtime status (`running` / `healthy`). The reported `version` is trusted
+from the runtime manifest when present (a bundled release binary may not support
+`--version` — it would boot a server instead); only version-less sources
+(PATH / config binaries) get an `--version` probe under a timeout.
+
+### Runtime acquisition (F2.3)
+
+The bundled runtime is filled by **`scripts/fetch-pixivflow-runtime.mjs`** (build
+from a local PixivFlow checkout, or fetch an npm spec). It lays out
+`resources/runtime/pixivflow/{dist, node_modules, package.json, VERSION}` and
+rewrites `runtime-manifest.json` to `["node","./dist/webui/index.js"]`. Those are
+**git-ignored build products**; the committed default manifest still points at the
+lightweight dev stand-in (`dev-backend.mjs`), so a fresh clone runs without the
+heavy artifact until the fetch runs. npm-workspace packages the built dist depends
+on (e.g. `@redtidev/pixiv-client`) are materialized into the runtime's
+`node_modules` so the bundle is self-contained.
 
 ### WebUI integration (方案 A) — F2.2
 

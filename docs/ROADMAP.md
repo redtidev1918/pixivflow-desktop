@@ -8,7 +8,7 @@ rewrite of upstream PixivFlow / webui.
 |---|---|---|
 | **Phase 0 — Foundation** ✅ | Repository skeleton | structure · docs · `desktop-manifest.json` / `desktop-config.json` contracts |
 | **Phase 1 — Shell MVP** ✅ | First runnable app | Tauri 2 window · frontend status shell · `BackendManager` (start/stop/restart/health) · config system · single-instance · file logging |
-| **Phase 2 — Real backend integration** 🚧 | Lifecycle | 2.1 adapter+discovery+doctor ✅ · 2.2 bundled runtime+manifest · 方案 A WebUI (`STATIC_PATH`) · open WebUI ✅ · 2.3 fetch real release binary ⬜ |
+| **Phase 2 — Real backend integration** 🚧 | Lifecycle | 2.1 adapter+discovery+doctor ✅ · 2.2 bundled runtime+manifest+方案 A WebUI (`STATIC_PATH`)+open WebUI ✅ · 2.3 `scripts/fetch-pixivflow-runtime.mjs` acquires the real PixivFlow runtime into the bundle ✅ (committed default stays the dev stand-in) |
 | **Phase 3 — UX** ⬜ | Experience | settings page · log viewer · remote mode · tray icon |
 | **Phase 4 — Distribution** ⬜ | Packaging | GitHub Actions · Windows .exe · macOS .dmg · Linux AppImage |
 | **Phase 5 — Releasegraph** ⬜ | Fleet automation | `desktop-manifest.json` version lock · automated update PR · auto Desktop release |
@@ -117,11 +117,31 @@ Live-verified: default config resolves `source=bundled real=true`, auto-starts
 the bundled backend, `/api/health → 200`, and `GET /` serves the bundled WebUI
 dist.
 
-## Phase 2.3 — Fetch real PixivFlow runtime ⬜
+## Phase 2.3 — Fetch real PixivFlow runtime ✅
 
-- Acquire the real backend (downloaded release or local build) and drop it into
-  `resources/runtime/pixivflow/` (matching the manifest contract).
-- Bundle the real webui dist into `resources/webui/dist`.
+Acquire the real backend and wire it in via the runtime manifest.
+
+- **`scripts/fetch-pixivflow-runtime.mjs`** — `node scripts/fetch-pixivflow-runtime.mjs
+  [--source <dir|npm-spec>]`. Builds the real backend (from a local PixivFlow
+  checkout, or fetches an npm spec) and lays it into
+  `resources/runtime/pixivflow/{dist, node_modules, package.json, VERSION}`,
+  rewriting `runtime-manifest.json` to `["node","./dist/webui/index.js"]`.
+  npm-workspace deps the built dist needs (e.g. `@redtidev/pixiv-client`) are
+  materialized so the runtime is self-contained.
+- **git-ignored artifact** — the laid-out runtime is a local build product. The
+  committed default manifest stays the dev stand-in (`dev-backend.mjs`), so a
+  fresh clone runs light until the fetch runs.
+- **version from manifest** — `discover_with_version` now trusts the manifest
+  version (a real release binary may not support `--version`); only version-less
+  sources get an `--version` probe.
+- **tests robust to both** — `backend_test.rs` exercises the dev stand-in
+  explicitly and asserts the bundled-runtime contract agnostically, so `cargo test`
+  passes whether or not the real runtime is laid out.
+
+Live-verified: fetched real `pixivflow@2.46.0`; the self-contained runtime boots
+from `resources/runtime/pixivflow/dist`, `/api/health` → 200, `GET /` serves the
+bundled WebUI dist, graceful SIGTERM stop. (Bundling the real *webui dist* remains
+an open follow-up — F2.2 step 方案 A keeps the placeholder `webui/dist`.)
 
 ## Phase 3 — UX ⬜
 

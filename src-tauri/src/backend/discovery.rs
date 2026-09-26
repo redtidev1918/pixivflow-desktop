@@ -384,10 +384,15 @@ pub struct DoctorReport {
 }
 
 /// Convenience: discover + probe version for real backends + set serves_webui.
+///
+/// When the descriptor already carries a version (a bundled runtime's manifest),
+/// it is trusted — `--version` is NOT probed, because a real release binary may
+/// not support a `--version` flag (it would boot a server instead of printing).
+/// Only version-less sources (PATH / config binaries) get the `--version` probe.
 pub fn discover_with_version(config: &AppConfig) -> BackendDescriptor {
     let mut d = discover(config);
-    if d.is_real() {
-        d.version = probe_version(&d.command).or(d.version);
+    if d.is_real() && d.version.is_none() {
+        d.version = probe_version(&d.command);
     }
     d
 }

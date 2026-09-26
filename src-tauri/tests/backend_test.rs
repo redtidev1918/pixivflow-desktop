@@ -7,7 +7,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use pixivflow_desktop::backend::manager::{BackendManager, LaunchSpec};
-use pixivflow_desktop::backend::discovery::{discover, discover_with_version, probe_version};
+use pixivflow_desktop::backend::discovery::{discover, discover_with_version, probe_version, static_webui_path};
 use pixivflow_desktop::backend::BackendSource;
 use pixivflow_desktop::config::{AppConfig, BackendConfig, RemoteConfig};
 
@@ -36,6 +36,13 @@ fn config_with_command(port: u16, command: &str, args: Vec<String>) -> AppConfig
 
 fn mock_path() -> String {
     String::from(env!("CARGO_MANIFEST_DIR")) + "/resources/mock-backend.mjs"
+}
+
+/// The committed lightweight dev stand-in, independent of whichever runtime the
+/// FETCHED manifest points at. Tests that need a known-benign backend use this
+/// directly so they pass whether the real runtime has been laid out or not.
+fn dev_standin_path() -> String {
+    String::from(env!("CARGO_MANIFEST_DIR")) + "/resources/runtime/pixivflow/dev-backend.mjs"
 }
 
 fn wait_healthy(m: &BackendManager) -> bool {
@@ -131,9 +138,14 @@ fn bundled_takes_precedence_over_config_and_path() {
     let d = discover(&c);
     assert_eq!(d.source, BackendSource::Bundled, "bundled must shadow config");
     assert!(d.is_real());
-    assert!(d.serves_webui, "dev stand-in declares 方案 A WebUI hosting");
+    assert!(d.serves_webui, "bundled runtime declares 方案 A WebUI hosting");
+    // Whatever the manifest target is (dev stand-in or fetched real runtime),
+    // the executable must resolve inside the bundled runtime dir.
     let exe = d.executable_path.as_deref().expect("bundled exe path");
-    assert!(exe.contains("dev-backend.mjs"), "bundled entry is the dev stand-in");
+    assert!(
+        exe.contains("runtime/pixivflow"),
+        "bundled exe must live in the runtime dir, got {exe:?}"
+    );
 }
 
 #[test]
@@ -142,23 +154,26 @@ fn bundled_manifest_provides_static_webui_path() {
     assert_eq!(d.source, BackendSource::Bundled);
     let sp = d.static_path.as_deref().expect("static_path for bundled webui");
     assert!(sp.contains("webui/dist"), "STATIC_PATH should point at webui/dist, got {sp:?}");
-    // manifest version is the probe-able source of truth
-    let v = probe_version(&d.command);
-    assert!(v.as_ref().is_some_and(|s| s.contains("0.0.0-dev")), "bundled --version, got {v:?}");
+    // the runtime manifest carries the version (no `--version` probe needed).
+    assert!(d.version.is_some(), "manifest must version the bundled runtime");
 }
 
 #[test]
 fn bundled_runtime_serves_webui_static_and_stops() {
-    // End-to-end 方案 A: the bundled backend serves the bundled WebUI dist over
-    // STATIC_PATH and answers health; it must stop gracefully (SIGTERM).
+    // End-to-end 方案 A: a manifest-contract backend serves the bundled WebUI
+    // dist over STATIC_PATH and answers health; it must stop gracefully. We
+    // drive the committed dev stand-in explicitly so this stays fast and
+    // deterministic whether or not the real runtime has been fetched.
     let port: u16 = 3110;
-    let d = discover(&config(port));
-    assert_eq!(d.source, BackendSource::Bundled);
-
     let mut m = BackendManager::new(config(port));
+    let mut env = std::collections::BTreeMap::new();
+    env.insert(
+        "STATIC_PATH".to_string(),
+        static_webui_path().expect("bundled webui dist present"),
+    );
     m.set_command_override(Some(LaunchSpec {
-        command: d.command.clone(),
-        env: d.extra_env(),
+        command: vec!["node".into(), dev_standin_path()],
+        env,
     }));
     m.start().unwrap();
     assert!(wait_healthy(&m), "bundled backend should be healthy on {port}");
@@ -193,6 +208,7 @@ fn doctor_resolves_bundled_runtime_and_version() {
     let d = discover_with_version(&config(3104));
     assert_eq!(d.source, BackendSource::Bundled);
     assert!(d.is_real());
-    let v = d.version.as_deref().expect("doctor needs a version");
-    assert!(v.contains("0.0.0-dev"), "bundled version should surface, got {v:?}");
+    // version comes from the runtime manifest (trusted, no `--version` probe on
+    // a real release binary). Assert it surfaces SOME version.
+    assert!(d.version.is_some(), "doctor needs a version from the manifest");
 }

@@ -10,6 +10,16 @@ src-tauri/resources/webui/*
 # keep placeholder .gitkeep dirs for a fresh checkout
 !**/.gitkeep
 
+# Bundled REAL runtime, laid out by scripts/fetch-pixivflow-runtime.mjs (F2.3).
+# Fetch acquires dist/ + prod-only node_modules/ + package.json into
+# src-tauri/resources/runtime/pixivflow/ and rewrites runtime-manifest.json in
+# place as a LOCAL working artifact. The committed manifest stays the dev
+# stand-in (dev-backend.mjs) so a fresh clone runs light until fetch runs.
+src-tauri/resources/runtime/pixivflow/dist/
+src-tauri/resources/runtime/pixivflow/node_modules/
+src-tauri/resources/runtime/pixivflow/package.json
+src-tauri/resources/runtime/pixivflow/package-lock.json
+
 
 # Logs
 *.log

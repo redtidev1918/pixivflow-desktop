@@ -71,5 +71,27 @@ node src-tauri/resources/mock-backend.mjs   # serves :3000 (PORT env overrides)
 
 The bundled runtime dev stand-in (`src-tauri/resources/runtime/pixivflow/dev-backend.mjs`)
 proves the F2.2 bundled contract — `--version`, `/api/health`, and static WebUI
-serving over `STATIC_PATH`. F2.3 replaces it with the real PixivFlow release
-binary (see `runtime-manifest.json`).
+serving over `STATIC_PATH`. It is the committed default so a fresh clone runs
+light (no heavy artifact required).
+
+## Bundling the real PixivFlow runtime (F2.3)
+
+To lay the real backend into the bundle (a git-ignored local artifact) and point
+the manifest at it:
+
+```bash
+# from a local PixivFlow checkout
+node scripts/fetch-pixivflow-runtime.mjs --source /path/to/PixivFlow
+# or from npm (best-effort; the backend's npm-workspace deps must be published)
+node scripts/fetch-pixivflow-runtime.mjs --source pixivflow@2.46.0
+```
+
+This builds/copies `dist/` + prod-only `node_modules/` + `package.json` into
+`resources/runtime/pixivflow/`, materializes npm-workspace deps, writes `VERSION`,
+and rewrites `runtime-manifest.json` to `["node","./dist/webui/index.js"]`.
+Restore the committed dev-stand-in default (e.g. before a clean commit) with:
+
+```bash
+git checkout -- src-tauri/resources/runtime/pixivflow/runtime-manifest.json \
+              src-tauri/resources/runtime/pixivflow/VERSION
+```

@@ -182,8 +182,10 @@ UI / frontend changes must verify:
 
 ## Current Roadmap
 
-Current stage: **F2.2 — Bundled Runtime + WebUI Integration (方案 A)** — done;
-next F2.3 fetches the real PixivFlow release binary into the bundled runtime.
+Current stage: **F2.3 — Real PixivFlow runtime acquisition** — done. `scripts/fetch-pixivflow-runtime.mjs` lays the real backend into
+`src-tauri/resources/runtime/pixivflow/` (git-ignored build product) and points
+the manifest at it; the committed default stays the dev stand-in (`dev-backend.mjs`),
+so a fresh clone runs light until the fetch runs. Next: Phase 3 UX / Phase 4 distribution.
 
 Not currently implemented (do not add without an explicit decision):
 
