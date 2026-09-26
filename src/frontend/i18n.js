@@ -26,7 +26,7 @@ export function normalizeLocale(raw) {
 
 export const MESSAGES = {
   en: {
-    "app.tagline": "The desktop runtime and manager for PixivFlow",
+    "app.tagline": "Backend service status",
     "card.backendStatus": "Backend Status",
     "meta.port": "Port",
     "meta.pid": "PID",
@@ -41,7 +41,9 @@ export const MESSAGES = {
     "health.healthy": "Healthy",
     "health.unhealthy": "Unhealthy",
     "line.starting": "Starting PixivFlow…",
-    "line.running": "PixivFlow running",
+    "line.running": "Backend running",
+    "notice.fallback":
+      "PixivFlow normally opens the WebUI in its own window. This panel is the fallback that appears only when the backend cannot start — the menu bar keeps the same actions available at any time.",
     "line.waitingBackend": "Waiting for backend…",
     "line.stopped": "Backend stopped",
     "line.failed": "Backend failed",
@@ -67,7 +69,7 @@ export const MESSAGES = {
     "foot.mode": "mode: {value}",
   },
   zh: {
-    "app.tagline": "PixivFlow 的桌面运行环境和管理器",
+    "app.tagline": "后台服务状态",
     "card.backendStatus": "后端状态",
     "meta.port": "端口",
     "meta.pid": "PID",
@@ -82,7 +84,9 @@ export const MESSAGES = {
     "health.healthy": "正常",
     "health.unhealthy": "异常",
     "line.starting": "正在启动 PixivFlow…",
-    "line.running": "PixivFlow 运行中",
+    "line.running": "后台服务运行中",
+    "notice.fallback":
+      "PixivFlow 平时直接在独立窗口中打开 WebUI。此面板是后台服务无法启动时的备用界面——菜单栏随时提供相同的操作。",
     "line.waitingBackend": "等待后端响应…",
     "line.stopped": "后端已停止",
     "line.failed": "后端启动失败",

@@ -611,23 +611,88 @@ pub fn open_webui(
 }
 
 /// Outcome signalled to the login waiter: the OAuth code, or the news that the
-/// login window is gone (the user closed it), which ends the wait at once.
+/// sign-in view is gone (cancelled from the app menu), which ends the wait at
+/// once.
 enum Waiter {
     Code(String),
     Closed,
 }
 
-/// Host login bridge: open the Pixiv authorize page in a Tauri app window and
-/// return the OAuth `code` it redirected with.
+/// Label of the child webview that renders the Pixiv sign-in page *inside* the
+/// WebUI window.
+const LOGIN_WEBVIEW: &str = "login";
+
+/// End a sign-in that is waiting on screen (the app menu's "取消登录").
 ///
-/// `auth_url` / `redirect_uri` come from the WebUI verbatim — the backend owns
-/// the OAuth flow (`POST /api/auth/login/host/start`); the desktop only opens
-/// the window, watches the navigation and hands back the raw code.
+/// The sign-in view is a child webview: it has no window chrome, so the user
+/// cannot close it, and the remote page must not be able to reach the app's IPC.
+/// That makes the host — here — the only side that can cancel, which is exactly
+/// the control the earlier window-based design got for free from a title bar.
 ///
-/// Resolves `Ok(Some(code))` when the login window hits `redirect_uri` (that
-/// navigation is blocked so the callback page never loads), `Ok(None)` when the
-/// user closes the window or the wait times out. The login window is always
-/// closed before returning.
+/// Returns whether a wait was actually ended.
+pub fn cancel_login(app: &AppHandle) -> bool {
+    let sender = app
+        .try_state::<ManagedState>()
+        .and_then(|state| state.login_cancel.lock().ok().and_then(|mut s| s.take()));
+    match sender {
+        Some(tx) => {
+            let _ = tx.send(());
+            login_log(app, "INFO", "cancel requested (menu)");
+            true
+        }
+        None => {
+            login_log(app, "INFO", "cancel requested with no sign-in in progress");
+            false
+        }
+    }
+}
+
+/// Keep the embedded sign-in view exactly as large as the WebUI window: a child
+/// webview is positioned by us and does not follow its parent on its own, so
+/// resizing the window would otherwise leave the Pixiv page at its old size.
+pub fn resize_login_overlay(app: &AppHandle, size: tauri::PhysicalSize<u32>) {
+    let Some(view) = app.get_webview(LOGIN_WEBVIEW) else {
+        return;
+    };
+    let scale = app
+        .get_window("webui")
+        .and_then(|w| w.scale_factor().ok())
+        .unwrap_or(1.0);
+    let logical = size.to_logical::<f64>(scale);
+    let _ = view.set_size(tauri::LogicalSize::new(logical.width, logical.height));
+}
+
+/// Close the embedded sign-in view (when one is up) and hand the keyboard back to
+/// the WebUI page that was waiting underneath it.
+fn remove_login_overlay(app: &AppHandle) {
+    if let Some(view) = app.get_webview(LOGIN_WEBVIEW) {
+        let to_close = view.clone();
+        let _ = view.run_on_main_thread(move || {
+            let _ = to_close.close();
+        });
+    }
+    if let Some(win) = app.get_window("webui") {
+        let _ = win.set_focus();
+    }
+}
+
+/// Host login bridge: render the Pixiv authorize page **inside the WebUI window**
+/// and return the OAuth `code` it redirected with.
+///
+/// A separate window (an earlier revision) or the user's own browser both read as
+/// "the app sent me somewhere else"; a child webview covering the WebUI keeps the
+/// whole flow on the app's own surface, and — because the WebUI page is never
+/// unloaded — its pending `openLoginWindow()` promise simply resolves when the
+/// overlay goes away. Nothing about the WebUI/backend contract changes.
+///
+/// `auth_url` / `redirect_uri` come from the WebUI verbatim — the backend owns the
+/// OAuth flow (`POST /api/auth/login/host/start`); the desktop only renders the
+/// page, watches the navigation and hands back the raw code.
+///
+/// Resolves `Ok(Some(code))` when the view hits `redirect_uri` (that navigation is
+/// blocked so the callback page never loads), `Ok(None)` when the sign-in is
+/// cancelled from the app menu or the wait times out. The overlay is always
+/// removed before returning.
 #[tauri::command]
 pub async fn open_login_window(
     app: AppHandle,
@@ -655,97 +720,109 @@ pub async fn open_login_window(
 
     let (tx, rx) = mpsc::channel::<Waiter>();
     let tx = std::sync::Mutex::new(tx);
+    // Published before the view exists so the menu can end the wait even while the
+    // child webview is still being built.
+    let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
+    if let Some(state) = app.try_state::<ManagedState>() {
+        if let Ok(mut slot) = state.login_cancel.lock() {
+            *slot = Some(cancel_tx);
+        }
+    }
 
-    // An async command runs on a worker thread, but a window may only be created
-    // on the main thread (macOS panics otherwise), so hand the build over and
-    // wait for its result. The builder itself borrows `app`, so it is built
-    // inside the closure.
+    // An async command runs on a worker thread, but a webview may only be created
+    // on the main thread (macOS panics otherwise), so hand the build over and wait
+    // for its result.
     let (built_tx, built_rx) = mpsc::channel::<Result<(), String>>();
-    let (closed_tx, closed_rx) = mpsc::channel::<Waiter>();
     let main_app = app.clone();
     app.run_on_main_thread(move || {
-        let nav_app = main_app.clone();
-        let builder =
-            tauri::WebviewWindowBuilder::new(&main_app, "login", tauri::WebviewUrl::External(url))
-                .title(i18n::t_static("Pixiv 登录", "Pixiv Sign-in"))
-                .inner_size(560.0, 780.0)
-                .resizable(true)
-                .center()
-                .on_navigation(move |url| {
-                    // `extract_auth_code` owns the whole decision: it matches the
-                    // callback (scheme+host+path, or the callback path suffix) and
-                    // yields the code, or `None` for every other URL.
-                    match extract_auth_code(url.as_str(), &redirect_uri) {
-                        // The callback itself must never load: the code is
-                        // delivered to the waiting command and the URL is
-                        // restored on screen.
-                        Some(code) => {
-                            // The code itself is never logged — only that one
-                            // arrived.
-                            login_log(
-                                &nav_app,
-                                "INFO",
-                                &format!(
-                                    "callback observed with a code at {} (navigation blocked, code length {})",
-                                    redacted_url(url.as_str()),
-                                    code.len()
-                                ),
-                            );
-                            if let Ok(sender) = tx.lock() {
-                                let _ = sender.send(Waiter::Code(code));
-                            }
-                            false
-                        }
-                        // Every other URL (the authorize page, Pixiv's own
-                        // pages, redirects inside the flow) is allowed through.
-                        None => true,
-                    }
-                });
-        // Close-and-recreate: a leftover `login` window from a previous attempt
-        // must not be reused (its navigation handler would still feed a stale
-        // channel), and Tauri needs the label to be free before the replacement
-        // is built. Destruction is asynchronous on the event loop.
-        if let Some(existing) = main_app.get_webview_window("login") {
+        // Close-and-recreate: a leftover view from a previous attempt must not be
+        // reused (its navigation handler would still feed a stale channel), and
+        // Tauri needs the label to be free before the replacement is added.
+        if let Some(existing) = main_app.get_webview(LOGIN_WEBVIEW) {
             let _ = existing.close();
             let deadline = std::time::Instant::now() + Duration::from_secs(2);
-            while main_app.get_webview_window("login").is_some()
+            while main_app.get_webview(LOGIN_WEBVIEW).is_some()
                 && std::time::Instant::now() < deadline
             {
                 std::thread::sleep(Duration::from_millis(25));
             }
         }
-        let outcome = builder
-            .build()
-            .map(|_| ())
-            .map_err(|e| format!("open login window: {e}"));
-        match &outcome {
-            Ok(()) => login_log(&main_app, "INFO", "window opened (label login, 560x780)"),
-            Err(e) => login_log(&main_app, "WARN", &format!("window build failed: {e}")),
-        }
-        // The user closing the window must end the wait immediately — without
-        // this the caller would sit here for the full timeout. `on_window_event`
-        // is scoped to this one window (the runtime registers the listener
-        // against its window id), and the handler is dropped with it.
-        if outcome.is_ok() {
-            if let Some(win) = main_app.get_webview_window("login") {
-                let closed_tx = closed_tx.clone();
-                win.on_window_event(move |event| {
-                    if matches!(event, tauri::WindowEvent::Destroyed) {
-                        let _ = closed_tx.send(Waiter::Closed);
+        let Some(parent) = main_app.get_window("webui") else {
+            let _ = built_tx.send(Err(
+                "the WebUI window is not open, so there is nothing to embed the sign-in page in"
+                    .to_string(),
+            ));
+            return;
+        };
+        // Cover the whole window at its current size; later resizes are handled by
+        // `resize_login_overlay` from the run-event loop.
+        let scale = parent.scale_factor().unwrap_or(1.0);
+        let size = parent
+            .inner_size()
+            .map(|s| s.to_logical::<f64>(scale))
+            .unwrap_or(tauri::LogicalSize::new(1100.0, 780.0));
+        let nav_app = main_app.clone();
+        let builder = tauri::WebviewBuilder::new(LOGIN_WEBVIEW, tauri::WebviewUrl::External(url))
+            .on_navigation(move |url| {
+                // `extract_auth_code` owns the whole decision: it matches the
+                // callback (scheme+host+path, or the callback path suffix) and
+                // yields the code, or `None` for every other URL.
+                match extract_auth_code(url.as_str(), &redirect_uri) {
+                    // The callback itself must never load: the code is delivered to
+                    // the waiting command and the WebUI comes back to the front.
+                    Some(code) => {
+                        // The code itself is never logged — only that one arrived.
+                        login_log(
+                            &nav_app,
+                            "INFO",
+                            &format!(
+                                "callback observed with a code at {} (navigation blocked, code length {})",
+                                redacted_url(url.as_str()),
+                                code.len()
+                            ),
+                        );
+                        if let Ok(sender) = tx.lock() {
+                            let _ = sender.send(Waiter::Code(code));
+                        }
+                        false
                     }
-                });
-            }
+                    // Every other URL (the authorize page, Pixiv's own pages,
+                    // redirects inside the flow) is allowed through.
+                    None => true,
+                }
+            });
+        let outcome = parent
+            .add_child(
+                builder,
+                tauri::LogicalPosition::new(0.0, 0.0),
+                tauri::LogicalSize::new(size.width, size.height),
+            )
+            .map(|view| {
+                let _ = view.set_focus();
+            })
+            .map_err(|e| format!("embed sign-in view: {e}"));
+        match &outcome {
+            Ok(()) => login_log(
+                &main_app,
+                "INFO",
+                &format!(
+                    "sign-in view embedded (label login, {}x{} inside window webui)",
+                    size.width.round() as i64,
+                    size.height.round() as i64
+                ),
+            ),
+            Err(e) => login_log(&main_app, "WARN", &format!("sign-in view failed: {e}")),
         }
         let _ = built_tx.send(outcome);
     })
-    .map_err(|e| format!("schedule login window: {e}"))?;
+    .map_err(|e| format!("schedule sign-in view: {e}"))?;
     built_rx
         .recv()
-        .map_err(|_| "login window build was not reported".to_string())??;
+        .map_err(|_| "sign-in view build was not reported".to_string())??;
 
-    // Wait for the navigation, the timeout or the user closing the window, then
-    // close the login window ourselves before resolving (the host owns its
-    // lifetime) and hand the result back to the waiting command.
+    // Wait for the navigation, the timeout or a menu cancel, then remove the
+    // overlay ourselves before resolving (the host owns its lifetime) and hand the
+    // result back to the waiting command.
     let (done_tx, done_rx) = mpsc::channel::<Option<String>>();
     let waiter = app.clone();
     std::thread::spawn(move || {
@@ -753,11 +830,17 @@ pub async fn open_login_window(
         let mut result: Option<String> = None;
         let mut timed_out = false;
         loop {
-            // The window-closed signal is polled on the same cadence as the
-            // timeout so a user close breaks out at once.
+            // The cancel signal is polled on the same cadence as the timeout so a
+            // menu click breaks out at once.
             let signal = match rx.recv_timeout(Duration::from_millis(150)) {
                 Ok(value) => Some(value),
-                Err(mpsc::RecvTimeoutError::Timeout) => closed_rx.try_recv().ok(),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if cancel_rx.try_recv().is_ok() {
+                        Some(Waiter::Closed)
+                    } else {
+                        None
+                    }
+                }
                 // Every sender is gone: the command was cancelled.
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             };
@@ -766,10 +849,10 @@ pub async fn open_login_window(
                     result = Some(code);
                     break;
                 }
-                // The user closed the login window (or it was destroyed): no
-                // code will ever arrive, so stop waiting right now.
+                // Cancelled from the menu: no code will ever arrive, so stop
+                // waiting right now.
                 Some(Waiter::Closed) => {
-                    login_log(&waiter, "INFO", "window closed by the user -> None");
+                    login_log(&waiter, "INFO", "cancelled from the menu -> None");
                     break;
                 }
                 None => {
@@ -790,15 +873,14 @@ pub async fn open_login_window(
                 ),
             );
         }
-        // `close()` also fires for the user's own close, so a single call covers
-        // both paths and is idempotent when the window is already gone. It must
-        // run on the main thread.
-        if let Some(win) = waiter.get_webview_window("login") {
-            let to_close = win.clone();
-            let _ = win.run_on_main_thread(move || {
-                let _ = to_close.close();
-            });
+        // Clear the cancel handle: it belongs to this wait only, and a stale
+        // sender would make a later menu click look like a live sign-in.
+        if let Some(state) = waiter.try_state::<ManagedState>() {
+            if let Ok(mut slot) = state.login_cancel.lock() {
+                *slot = None;
+            }
         }
+        remove_login_overlay(&waiter);
         let _ = done_tx.send(result);
     });
 
@@ -808,7 +890,7 @@ pub async fn open_login_window(
         .recv_timeout(LOGIN_TIMEOUT + Duration::from_secs(15))
         .map_err(|e| {
             login_log(&app, "WARN", &format!("waiter did not report: {e}"));
-            format!("login window wait failed: {e}")
+            format!("sign-in wait failed: {e}")
         })?;
     // Final line for the whole bridge call, so one grep shows how it ended. The
     // code itself is never logged — only its length.

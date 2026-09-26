@@ -34,11 +34,11 @@ no scheduling, no downloads, no delivery, no media handling, no Pixiv auth.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Desktop Layer  (this repo · Tauri 2 + Rust + Vite shell)     │
-│  ─ Tauri window / app lifecycle                                │
+│  ─ Tauri window / app lifecycle · app menu, embedded sign-in  │
 │  ─ BackendManager: spawn · stop · restart · health · adopt     │
 │  ─ discovery.rs: bundled → config → PATH → mock               │
 │  ─ config (desktop-config.json) · logging · native integration│
-│  ─ control shell (src/frontend) — status + 打开 PixivFlow     │
+│  ─ fallback panel (src/frontend) — only on start failure      │
 └───────────────┬──────────────────────────────────────────────┘
                 │ spawn / supervise / open_webui
                 ▼
@@ -62,6 +62,23 @@ Layer responsibilities:
   process management, runtime discovery, configuration, logging, native
   integration. It renders the upstream UI in a webview window and never
   re-implements the interface.
+
+### Window model (F4.1)
+
+Two windows exist and normally only one is visible:
+
+- **`webui` — the app.** Created on `http://127.0.0.1:{port}/` with the host
+  bridge injected, shown as soon as health passes. Closing it stops the backend
+  and quits the process. The WebUI window is *not* a child of the launcher: it
+  is the product surface, and the launcher is no longer the "first" window.
+- **`main` — the fallback panel** (`"visible": false` in `tauri.conf.json`). The
+  Vite shell in `src/frontend` is backend status + controls, shown only when the
+  backend never becomes healthy, or on demand from the menu bar. Closing it
+  while `webui` is open just hides it.
+
+Because the panel is normally invisible, the app menu
+(`build_menu()` in `src-tauri/src/lib.rs`) carries the host-level actions: *Open
+manager*, *Open logs*, *Collect diagnostics*, *Cancel sign-in*.
 - **Backend Layer (upstream PixivFlow)** — the execution plane: PixivFlow
   business logic, the WebUI-facing HTTP + Socket.IO API, the scheduler, and the
   download pipeline.
@@ -84,11 +101,12 @@ Layer responsibilities:
    soon as the first health probe succeeds — the user never has to click
    "打开 PixivFlow".
 5. **Stop** — graceful **SIGTERM** with a bounded wait; never `kill -9`.
-   Closing the launcher window stops the backend (spawned *or* adopted) and
-   closes the WebUI window. Quitting the app (Cmd+Q, the app menu, or
-   `osascript quit`) stops it too: a macOS quit never reaches the window close
-   handler, so `lib.rs` also handles `RunEvent::ExitRequested` / `RunEvent::Exit`
-   with the same idempotent `stop()`.
+   Closing the **WebUI window** stops the backend (spawned *or* adopted) and
+   quits; the hidden `main` panel only hides while the WebUI is open. Quitting
+   the app (Cmd+Q, the app menu, or `osascript quit`) stops it too: a macOS quit
+   never reaches the window close handler, so `lib.rs` also handles
+   `RunEvent::ExitRequested` / `RunEvent::Exit` with the same idempotent
+   `stop()`.
 
 ## Backend communication
 
@@ -206,10 +224,38 @@ already open). The Tauri shell (Vite `src/frontend`) is only the *control /
 status* surface, separate from the WebUI product page.
 
 The WebUI window is opened **automatically** by the setup hook once health has
-been confirmed (`poll_health_for` → `open_webui_window` on the main thread); the
-launcher window stays behind it. Closing the WebUI window returns the user to
-the launcher and leaves the backend running; closing the **launcher** window
-also closes the WebUI window and stops the backend.
+been confirmed (`poll_health_for` → `open_webui_window` on the main thread). The
+`main` panel stays hidden; if health never arrives, the setup thread's failure
+branch shows it instead (the user still gets a window with a *Start backend*
+button and the doctor report).
+
+Closing the **WebUI** window stops the backend and quits. Closing `main` while a
+`webui` window exists only hides it.
+
+### Embedded Pixiv sign-in (F4.1)
+
+The WebUI's sign-in flow asks the host to show the Pixiv authorize page through
+`window.pixivflowHost.openLoginWindow(authUrl, redirectUri)` (bridge injected by
+`commands::HOST_BRIDGE_SCRIPT`), which invokes the Rust command
+`open_login_window`. The host renders that page as a **child webview** covering
+the `webui` window (`Window::add_child`, label `login`) instead of opening a
+second OS window or the user's browser:
+
+- the WebUI page keeps running underneath, so the pending
+  `openLoginWindow()` promise still resolves with `{ code }` — the WebUI and the
+  backend contract are untouched;
+- `on_navigation` intercepts the `…/web/v1/users/auth/pixiv/callback`
+  redirect, extracts `code`, and blocks the navigation (only `scheme://host/path`
+  is ever logged, never the query);
+- the child has no chrome, so the host owns cancellation: the app menu's
+  *Cancel sign-in* → `commands::cancel_login()` resolves `None`, as does the
+  300 s timeout;
+- the remote Pixiv origin holds **no** capability — Tauri's ACL refuses every
+  `invoke` from it by design;
+- `add_child` is gated behind tauri's `unstable` feature (multi-webview), which
+  is why `src-tauri/Cargo.toml` enables it. The overlay is resized with its
+  parent from the `RunEvent::WindowEvent { Resized }` hook and always closed
+  before the command returns.
 
 Backend config shape (flat, per the desktop-config contract — `mode` is a
 **top-level** field, not under `backend`):

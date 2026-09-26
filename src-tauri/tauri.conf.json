@@ -15,6 +15,7 @@
       {
         "label": "main",
         "title": "PixivFlow Desktop",
+        "visible": false,
         "width": 1100,
         "height": 780,
         "minWidth": 720,

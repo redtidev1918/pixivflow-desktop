@@ -191,7 +191,16 @@ in F4.1 below.)
   `app_local_data_dir()/pixivflow`, so PixivFlow's own `config/` + `data/` +
   `downloads/` defaults land there.
 - **Auto-open WebUI** — as soon as the first health probe returns 200, the WebUI
-  window opens on the main thread; the launcher stays behind it.
+  window opens on the main thread. It *is* the app: the `main` panel is created
+  hidden (`"visible": false`) and only appears when the backend never becomes
+  healthy, or from the menu's *Open manager*.
+- **Embedded sign-in** — Pixiv sign-in renders as a child webview inside the
+  WebUI window (`Window::add_child`, tauri `unstable` feature) instead of a
+  second OS window or the user's browser; the app menu's *Cancel sign-in* ends
+  it, and the WebUI's `openLoginWindow()` promise still resolves with `{ code }`.
+- **App menu** — *Open manager* / *Open logs* / *Collect diagnostics* / *Cancel
+  sign-in* replace the launcher-only buttons, because the panel is normally
+  invisible.
 - **Orphan adoption** — a backend left over from a force-quit/crash is adopted
   (port open + `/api/health` 200 + listener command contains `pixivflow`) instead
   of failing with "端口已被占用"; `stop()` SIGTERMs it by pid.
@@ -200,7 +209,10 @@ in F4.1 below.)
   `backend resolved: source=bundled exe=…/runtime/pixivflow/./node`, `health OK
   (/api/health -> 200)`, `scale factors: launcher=Some(2.0) webui=Some(2.0)`,
   `auto-open: WebUI at http://127.0.0.1:3000/`; a force-quit relaunch reports
-  `backend adopted pid=…`.
+  `backend adopted pid=…`. The window model and the embedded sign-in were
+  verified from the packaged `.app`: only the `PixivFlow` WebUI window appears,
+  a sign-in embeds and is cancelled from the menu without a second window, and
+  closing it stops the backend (`last-run.json` → `cleanExit: true`).
 
 ### Remaining
 

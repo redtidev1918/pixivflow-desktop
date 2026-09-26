@@ -44,18 +44,29 @@ cargo tauri build --bundles app   # macOS .app only (fastest packaging check)
 
 ## How the app runs
 
-1. The Tauri window opens with the bootstrap control UI (`src/frontend`).
+1. The app starts with **no window on screen**: the `main` control panel
+   (`src/frontend`, the Vite shell) is created hidden — `"visible": false` in
+   `tauri.conf.json`. It is a fallback, not the front door.
 2. Rust reads `desktop-config.json` from the platform app-config dir
    (auto-creates a default).
 3. `discovery.rs` resolves which backend to run:
    `bundled runtime-manifest.json` → `backend.command` → `PATH` → dev mock.
 4. `BackendManager.start()` spawns it and `poll_health` probes `/api/health`.
 5. As soon as the first health probe succeeds the backend-served WebUI opens
-   **automatically** in its own webview window; the launcher stays behind it.
-   Closing the WebUI window returns to the launcher and keeps the backend
-   running — the **打开 PixivFlow** button re-opens it. Closing the *launcher*
-   stops the backend and closes the WebUI window.
-6. If a previous run crashed or was force-quit, its backend is still holding the
+   **automatically** in its own `webui` window — that window *is* the app.
+   Closing it stops the backend and quits. The menu bar carries the host
+   actions instead of the panel: *Open manager*, *Open logs*, *Collect
+   diagnostics*, *Cancel sign-in*. Closing the manager panel while the WebUI is
+   open merely hides it. If health never arrives, the setup thread shows the
+   panel (the *Start backend* button and the doctor report live there).
+6. Signing in to Pixiv stays **inside the WebUI window**: the WebUI asks the
+   host through `window.pixivflowHost.openLoginWindow(...)` and the host embeds
+   the Pixiv authorize page as a child webview covering the window
+   (the `open_login_window` command). No second window, no browser. The overlay has no
+   chrome, so end it with the menu's *Cancel sign-in* (or wait out the 300 s
+   timeout); on success the `code` resolves back into the WebUI's pending
+   promise.
+7. If a previous run crashed or was force-quit, its backend is still holding the
    port: the next launch **adopts** that process instead of failing. The log says
    `auto-start: backend adopted pid=…` instead of `started`.
 
@@ -78,15 +89,20 @@ cargo tauri build --bundles app   # macOS .app only (fastest packaging check)
   CWD-relative `logs/desktop.log` is only the last resort. It rotates at 2 MiB,
   keeping `desktop.log.1`…`.3`, and an unclean exit is recorded in
   `last-run.json` in the same dir. The control UI has an **Open Logs** button.
-- **Locale:** the launcher UI follows the system language (`zh` / `en`). Force
+- **Locale:** the desktop UI (menu bar, dialogs, fallback panel) follows the system language (`zh` / `en`). Force
   one with `PIXIVFLOW_DESKTOP_LOCALE=zh` (or `en`) — useful when the OS language
   is not what you want to test. The WebUI has its own locale setting.
-- **Diagnostics:** the launcher's **收集诊断 / Collect diagnostics** button (IPC
+- **Diagnostics:** the fallback panel's **收集诊断 / Collect diagnostics** button (also the app menu) (IPC
   `export_diagnostics`) writes `<log dir>/diagnostics-<utc-ts>/` with the log and
   its rotations, `last-run.json`, any collected `crash-*.ips`, `doctor.json`, a
   secret-redacted `config.json` and `env.txt`, then reveals the folder in Finder.
   To collect evidence from a user, ask for that folder — not for a terminal
   session.
+- **Sign-in:** the embedded sign-in logs `login: sign-in view embedded (…)`,
+  `login: finished: code received (length N)` or `login: finished: cancelled, no
+  code`. Only the code's *length* is logged — never the code. If the overlay
+  stays black, `open_login_window` answers with the backend URL it was given;
+  check the log for `login: bridge invoked (auth …)` first.
 - **Doctor:** `backend_doctor` IPC reports `source` / `version` / `port` /
   `running` / `healthy` — surfaced in the control UI footer.
 

@@ -269,7 +269,7 @@ pub fn install_panic_hook() {
 /// Window events that fire too often to be worth a log line: one `Focused` per
 /// click and one `ScaleFactorChanged`/`Moved` per drag frame would drown out
 /// everything useful.
-pub const NOISY_WINDOW_EVENTS: [&str; 3] = ["Focused", "ScaleFactorChanged", "Moved"];
+pub const NOISY_WINDOW_EVENTS: [&str; 4] = ["Focused", "ScaleFactorChanged", "Moved", "Resized"];
 
 /// Leading variant name of a `{:?}` rendering: `Focused(true)` -> `Focused`.
 pub fn event_variant_name(debug: &str) -> &str {
@@ -660,10 +660,11 @@ mod tests {
             "Focused(false)",
             "ScaleFactorChanged { scale_factor: 2.0, new_inner_size: PhysicalSize { width: 1, height: 1 } }",
             "Moved(PhysicalPosition { x: 1, y: 2 })",
+            "Resized(PhysicalSize { width: 1100, height: 780 })",
         ] {
             assert!(is_noisy_window_event(debug), "{debug} must not be logged");
         }
-        for debug in ["Destroyed", "CloseRequested { api: CloseRequestApi }", "Resized(PhysicalSize { width: 1, height: 1 })"] {
+        for debug in ["Destroyed", "CloseRequested { api: CloseRequestApi }"] {
             assert!(!is_noisy_window_event(debug), "{debug} must be logged");
         }
         assert_eq!(event_variant_name("Focused(true)"), "Focused");

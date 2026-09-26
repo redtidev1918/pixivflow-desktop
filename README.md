@@ -28,8 +28,13 @@ and bundles it.
 - **Open-and-run (one-click launch)** — double-click the app: it reads its config,
   auto-starts the bundled PixivFlow backend, health-checks it and opens the WebUI
   for you. The app carries its own Node runtime, so nothing has to be installed.
-- **Native desktop experience** — a fast, self-contained Tauri 2 app that boots
-  straight into a PixivFlow Desktop bootstrap UI (never a blank window).
+- **The WebUI window *is* the app** — the app opens the PixivFlow interface
+  directly; the control panel is a hidden fallback that appears only if the
+  backend cannot start (the menu bar keeps *Open manager*, *Open logs*, *Collect
+  diagnostics* and *Cancel sign-in* at hand).
+- **Sign-in inside the app** — the Pixiv authorize page is embedded in the
+  WebUI window as an overlay: no second window and no external browser, and the
+  login result goes straight back to the WebUI.
 - **Local backend lifecycle management** — the Rust `BackendManager` starts,
   adopts (a backend left behind by a crash), stops (graceful SIGTERM — on window
   close *and* on app quit) and
@@ -46,25 +51,35 @@ and bundles it.
   not next to the app.
 - **WebUI integration (方案 A)** — the desktop opens the bundled WebUI directly
   over `http://127.0.0.1:{port}/`, served by the backend via `STATIC_PATH` (no
-  second frontend). A dedicated `webui` window is created/reused on demand.
-- **Collect diagnostics & system-language UI** — the launcher follows the system
-  language (`zh` / `en`) and a **收集诊断 / Collect diagnostics** button bundles
-  the logs, the last-run record, any native crash report, doctor output and a
-  secret-free config into one folder and reveals it in the file manager — the
-  supported way to send a support report.
+  second frontend). The `webui` window is the product surface, created/reused on
+  demand.
+- **Collect diagnostics & system-language UI** — the app follows the system
+  language (`zh` / `en`) for the menu bar, the dialogs and the fallback panel,
+  and **收集诊断 / Collect diagnostics** bundles the logs, the last-run record,
+  any native crash report, doctor output and a secret-free config into one folder
+  and reveals it in the file manager — the supported way to send a support
+  report.
 
-## Status (F2.2 — Bundled runtime + WebUI integration)
+## Status (F4.1 — Real runtime + real WebUI in the bundle)
 
 Runnable Tauri 2 desktop app that discovers and supervises a **bundled** backend
 (`resources/runtime/pixivflow/`, described by `runtime-manifest.json`) and opens
 the **bundled WebUI** (`resources/webui/dist`) served by that backend — 方案 A.
+The WebUI window *is* the app: the `main` panel is created hidden and appears
+only if the backend cannot start (or from the menu's *Open manager*), the app
+menu carries *Open logs* / *Collect diagnostics* / *Cancel sign-in*, and signing
+in to Pixiv happens in an embedded overlay **inside** the WebUI window — no
+second window, no external browser.
+
 Discovery precedence keeps a shipped install stable: bundled → config → PATH →
-dev mock fallback. Core `BackendManager` stays a pure lifecycle owner. The
-control UI shows backend status / port / PID / health / source / version and
-offers **打开 PixivFlow** (open WebUI), Restart, Stop, Open Logs. A versioned
-`dev-backend.mjs` stand-in proves the full bundled contract until the real
-release binary is wired (F2.3). See [docs/ROADMAP.md](/docs/ROADMAP.md) for the
-full phase plan and [docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
+dev mock fallback. `BackendManager` stays a pure lifecycle owner. The fallback
+panel shows backend status / port / PID / health / source / version and offers
+**打开 PixivFlow** (open WebUI), Restart, Stop, Open Logs, Collect diagnostics.
+`scripts/fetch-pixivflow-runtime.mjs` lays the **real** PixivFlow runtime into
+the bundle (git-ignored build product); the committed default stays the light
+`dev-backend.mjs` stand-in so a fresh clone runs without it. See
+[docs/ROADMAP.md](/docs/ROADMAP.md) for the full phase plan and
+[docs/DEVELOPMENT.md](/docs/DEVELOPMENT.md) to run it.
 
 ## Architecture
 

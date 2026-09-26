@@ -8,11 +8,13 @@ pub mod logger;
 pub mod login_window;
 
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::sync::Mutex;
 
 use backend::manager::BackendManager;
 use config::AppConfig;
 use logger::{LastRun, Logger, SessionInfo};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::Manager;
 
 /// Shared application state, managed by Tauri so commands can reach it.
@@ -21,6 +23,11 @@ pub struct ManagedState {
     pub config_path: String,
     pub config_error: Mutex<Option<String>>,
     pub log: Logger,
+    /// Cancel handle of a sign-in that is currently on screen. The host owns the
+    /// wait (the WebUI only ever sees a promise), and the embedded view has no
+    /// window chrome to close, so the menu bar's "取消登录" — and nothing else the
+    /// remote page can reach — ends it from Rust.
+    pub login_cancel: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 /// Preferred log directory: `logDir` from the config when set, else the OS log
@@ -88,11 +95,89 @@ fn mark_clean_exit(log: &Logger) {
     }
 }
 
+/// Menu ids [`build_menu`] installs and the handler in [`run`] reacts to.
+const MENU_MANAGER: &str = "open-manager";
+const MENU_LOGS: &str = "open-logs";
+const MENU_DIAGNOSTICS: &str = "collect-diagnostics";
+const MENU_CANCEL_LOGIN: &str = "cancel-login";
+
+/// The app menu is where the host's own controls live now that the manager
+/// window is no longer the app's front door. Everything the launcher page used to
+/// offer (the manager itself as a fallback view, the log file, the diagnostics
+/// export) has to stay reachable without it — and "取消登录" is only reachable
+/// here: while the Pixiv sign-in covers the WebUI window, the remote page holds
+/// the keyboard and there is no window chrome to close.
+fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let manager_item =
+        MenuItemBuilder::with_id(MENU_MANAGER, i18n::t_static("打开管理器", "Open manager"))
+            .build(app)?;
+    let logs_item =
+        MenuItemBuilder::with_id(MENU_LOGS, i18n::t_static("打开日志", "Open logs")).build(app)?;
+    let diagnostics_item = MenuItemBuilder::with_id(
+        MENU_DIAGNOSTICS,
+        i18n::t_static("收集诊断", "Collect diagnostics"),
+    )
+    .build(app)?;
+    let cancel_item = MenuItemBuilder::with_id(
+        MENU_CANCEL_LOGIN,
+        i18n::t_static("取消登录", "Cancel sign-in"),
+    )
+    .build(app)?;
+
+    // The macOS-only predefined items are cfg'd out on other platforms, where
+    // `about`/`services`/`hide`/`hide_others`/`show_all` do not exist.
+    #[cfg(target_os = "macos")]
+    let app_menu = SubmenuBuilder::new(app, "PixivFlow Desktop")
+        .about(None)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+    #[cfg(not(target_os = "macos"))]
+    let app_menu = SubmenuBuilder::new(app, "PixivFlow Desktop").quit().build()?;
+
+    let host_menu = SubmenuBuilder::new(app, "PixivFlow")
+        .item(&manager_item)
+        .item(&logs_item)
+        .item(&diagnostics_item)
+        .separator()
+        .item(&cancel_item)
+        .build()?;
+    let edit_menu = SubmenuBuilder::new(app, i18n::t_static("编辑", "Edit"))
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    let window_menu = SubmenuBuilder::new(app, i18n::t_static("窗口", "Window"))
+        .minimize()
+        .close_window()
+        .build()?;
+
+    MenuBuilder::new(app)
+        .items(&[&app_menu, &host_menu, &edit_menu, &window_menu])
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
+            // A second launch is meant to bring the app forward: the WebUI is the
+            // app, the manager only exists as the fallback view.
+            let target = app
+                .get_webview_window("webui")
+                .or_else(|| app.get_webview_window("main"));
+            if let Some(w) = target {
+                let _ = w.show();
                 let _ = w.set_focus();
             }
         }))
@@ -111,6 +196,24 @@ pub fn run() {
             commands::log_frontend,
             i18n::get_locale,
         ])
+        .on_menu_event(|handle, event| match event.id().as_ref() {
+            MENU_MANAGER => {
+                if let Some(win) = handle.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+            MENU_LOGS => {
+                let _ = commands::open_logs(handle.state::<ManagedState>());
+            }
+            MENU_DIAGNOSTICS => {
+                let _ = commands::export_diagnostics(handle.clone(), handle.state::<ManagedState>());
+            }
+            MENU_CANCEL_LOGIN => {
+                commands::cancel_login(handle);
+            }
+            _ => {}
+        })
         .setup(|app| {
             // Panic hook first: everything below — and every later thread —
             // must leave a durable record before any window/backend work.
@@ -152,6 +255,7 @@ pub fn run() {
                 config_path: config_path.display().to_string(),
                 config_error: Mutex::new(config_error),
                 log: logger,
+                login_cancel: Mutex::new(None),
             };
             state.log.info(&format!(
                 "==== PixivFlow Desktop F1 started ==== (mode={} port={})",
@@ -206,6 +310,17 @@ pub fn run() {
 
             app.manage(state);
 
+            // 3b. the app menu: the host's controls, including the only way out of
+            //     an embedded sign-in view (see [`build_menu`]).
+            match build_menu(app.handle()) {
+                Ok(menu) => {
+                    if let Err(e) = app.set_menu(menu) {
+                        eprintln!("menu install failed: {e}");
+                    }
+                }
+                Err(e) => eprintln!("menu build failed: {e}"),
+            }
+
             // 4. auto-start the local backend in the background
             let app_handle = app.handle().clone();
             let auto_port = cfg.port();
@@ -252,6 +367,18 @@ pub fn run() {
                                 }
                             }
                         });
+                    } else {
+                        // Nothing was opened, so the hidden manager window is the
+                        // only place that can say what went wrong: show it.
+                        if let Some(state) = app_handle.try_state::<ManagedState>() {
+                            state.log.warn(
+                                "backend did not become healthy — showing the manager window",
+                            );
+                        }
+                        if let Some(win) = app_handle.get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
                     }
                 });
             }
@@ -261,16 +388,15 @@ pub fn run() {
 
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                // Closing the WebUI returns the user to the launcher, which stays
-                // open behind it; the backend keeps running. Closing the launcher
-                // is the app's exit: tear the WebUI window down with it and stop
-                // the backend so no orphan holds the port.
-                // The transient `login` window (host login bridge) is not a
-                // launcher either: closing it must never stop the backend.
-                if window.label() == "webui" || window.label() == "login" {
+                // The WebUI window IS the app: closing it quits, taking the
+                // backend (and the port it holds) with it. The manager window is
+                // only the fallback view, so closing it merely hides it while a
+                // WebUI window is still up — and quits when there is none.
+                let label = window.label().to_string();
+                let h = window.app_handle().clone();
+                if label == "main" && h.get_webview_window("webui").is_some() {
                     return;
                 }
-                let h = window.app_handle().clone();
                 std::thread::spawn(move || {
                     if let Some(webui) = h.get_webview_window("webui") {
                         let _ = webui.close();
@@ -281,6 +407,9 @@ pub fn run() {
                             Err(e) => state.log.warn(&format!("window closed: stop backend failed: {e}")),
                         }
                     }
+                    // Closing the last window has to end the process: no window
+                    // is left to trigger the exit path otherwise.
+                    h.exit(0);
                 });
             }
         })
@@ -294,6 +423,19 @@ pub fn run() {
     // adoption covers a backend that still survives an abrupt kill.
     app.run(|handle, event| {
         let state = handle.try_state::<ManagedState>();
+
+        // 5b. an embedded sign-in view is positioned by us and does not follow its
+        //     parent on its own, so it is resized whenever the WebUI window is.
+        if let tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Resized(size),
+            ..
+        } = &event
+        {
+            if label == "webui" {
+                commands::resize_login_overlay(handle, *size);
+            }
+        }
 
         // 6. run-event trace (high-frequency focus/scale events are filtered out).
         if let Some(state) = &state {

@@ -38,6 +38,10 @@ body {
 
 .status-line { font-size: 13.5px; color: var(--muted); margin: 16px 0 12px; }
 
+/* The fallback panel only shows up when the backend failed, so its explanatory
+   line is deliberately quiet: it is context, not an alarm. */
+.notice { font-size: 12px; line-height: 1.5; color: var(--muted); margin: 0 0 14px; }
+
 .card {
   background: var(--card); border: 1px solid #2a3550; border-radius: 14px;
   padding: 18px; margin-bottom: 14px;

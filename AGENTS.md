@@ -78,6 +78,52 @@ Rust / Tauri **must not** own:
 Any Pixiv functionality must live in the PixivFlow backend and be reached over
 its API — never reimplemented here.
 
+## Window model
+
+Two windows exist; normally only one is visible.
+
+- **`webui` — the app.** `open_webui_window()` creates a `WebviewWindow` on the
+  backend's `http://127.0.0.1:<port>/`, injects the host bridge, and shows it as
+  soon as the backend answers healthy (auto-start thread in `lib.rs`).
+  **Closing it quits**: the backend is stopped and the process exits.
+- **`main` — the fallback panel** (`"visible": false` in `tauri.conf.json`). The
+  bootstrap shell is not the front door any more; it appears only when the
+  backend never becomes healthy (the `else` branch of the auto-start thread) or
+  from the menu bar's *Open manager*. Closing it while a `webui` window exists
+  merely hides it.
+
+Never resurrect the pattern "launcher window first, product UI second" — a
+manager window opening on every start was reported as a defect.
+
+## Native sign-in (embedded)
+
+Pixiv sign-in stays **inside the app**: never a separate OS window, never the
+user's browser.
+
+- The WebUI calls `window.pixivflowHost.openLoginWindow(authUrl, redirectUri)`
+  (injected by `commands::HOST_BRIDGE_SCRIPT`), which invokes the Rust command
+  `open_login_window`.
+- That command embeds the Pixiv authorize page as a **child webview** covering
+  the `webui` window (`Window::add_child`, label `login`) — this is why
+  `src-tauri/Cargo.toml` enables tauri's `unstable` feature (multi-webview is
+  gated behind it). The WebUI page stays loaded underneath, so its pending
+  promise resolves normally: the WebUI and the backend need **no** change, and
+  the `{ code }` contract is untouched.
+- The child webview has no chrome, so cancellation is host-side only: the app
+  menu's *取消登录* → `commands::cancel_login()` ends the wait (`None`), as does
+  the 300 s timeout.
+- The remote Pixiv origin gets **no** capability entry — every `invoke` from it
+  is refused by Tauri's ACL. Never grant one to make a probe work.
+- The overlay is resized with its parent from the `RunEvent::WindowEvent {
+  Resized }` hook and is always closed before the command returns.
+
+## The app menu
+
+The launcher is hidden by default, so the menu bar carries the host controls
+(`build_menu()` in `lib.rs`): *Open manager*, *Open logs*, *Collect diagnostics*,
+*Cancel sign-in*. A new host-level action belongs in the menu **and** in the
+fallback panel — never in the panel alone.
+
 ## BackendManager Contract
 
 `BackendManager` is a **pure lifecycle owner**. It is permanently limited to:
@@ -106,6 +152,8 @@ it via `set_command_override()`; it does not touch the process lifecycle.
 ## Frontend Rules
 
 The desktop frontend (`src/frontend`) stays **light** — a control / status shell.
+It is the **fallback panel** (`main`), not the product UI: its copy must present
+it as backend status, never as the app's main window.
 
 Allowed:
 
@@ -274,7 +322,9 @@ Backend lifecycle changes must verify:
 
 Packaging changes must be tested from the **installed bundle** (launch the built
 `.app`, not only a debug run): the bundled runtime boots, health returns 200, the
-WebUI opens, and closing the launcher stops the backend.
+WebUI window opens automatically and is the only window on screen, an embedded
+Pixiv sign-in can be started and cancelled from the app menu, and closing the
+WebUI window stops the backend.
 
 UI / frontend changes must verify:
 
@@ -284,11 +334,13 @@ UI / frontend changes must verify:
 
 ## Current Roadmap
 
-Current stage: **F4.1 — Real runtime + real WebUI in the bundle** — the `.app`
+Current stage: **F4.1 — Real runtime + real WebUI in the bundle.** The `.app`
 carries the real self-contained PixivFlow runtime (a standalone `node` beside
 `dist/` + `node_modules/`), the built WebUI dist, a per-user data root as the
 backend CWD, automatic WebUI opening after health, and adoption of a backend
-orphaned by a crash. The F2.3 work formalized the manifest
+orphaned by a crash. The WebUI window *is* the app (the manager window is a
+hidden fallback, see "Window model") and Pixiv sign-in happens in an embedded
+view inside it. The F2.3 work formalized the manifest
 `{version, platform, command[], args[], health, staticPath, servesWebui}` and
 `scripts/fetch-pixivflow-runtime.mjs` lays the real backend into
 `src-tauri/resources/runtime/pixivflow/` (git-ignored build product); doctor
