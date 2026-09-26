@@ -43,9 +43,20 @@ function argValue(name) {
   return i >= 0 ? a[i + 1] : undefined;
 }
 
+// `npm` is a shell shim (`npm.cmd`) on Windows, and `execFileSync` cannot
+// resolve that without a shell — it fails with `spawnSync npm ENOENT`. Every
+// command therefore runs through the platform shell on Windows, which is how
+// the runner's PATH is meant to be used.
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 function run(cmd, args, opts = {}) {
   log([cmd, ...args].join(' '));
-  execFileSync(cmd, args, { stdio: 'inherit', env: process.env, ...opts });
+  execFileSync(cmd, args, {
+    stdio: 'inherit',
+    env: process.env,
+    shell: process.platform === 'win32',
+    ...opts,
+  });
 }
 
 const pinned = () => {
@@ -64,8 +75,8 @@ function ensureBuiltDist(dir) {
   const dist = join(dir, 'dist');
   if (!(existsSync(dist) && existsSync(join(dist, 'index.html')))) {
     log(`no built dist/ in ${dir}; building it`);
-    run('npm', ['ci', '--legacy-peer-deps'], { cwd: dir });
-    run('npm', ['run', 'build'], { cwd: dir });
+    run(NPM, ['ci', '--legacy-peer-deps'], { cwd: dir });
+    run(NPM, ['run', 'build'], { cwd: dir });
   }
   if (!(existsSync(dist) && existsSync(join(dist, 'index.html')))) {
     fail(`build did not produce dist/index.html in ${dir}`);
