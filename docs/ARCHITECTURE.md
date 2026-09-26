@@ -112,35 +112,54 @@ Layer responsibilities:
 (`src-tauri/src/backend/discovery.rs`), which resolves in priority order:
 
 1. **bundled** `resources/runtime/pixivflow/` — described by an inline
-   `runtime-manifest.json` (`{name, version, platform, command[], health,
-   servesWebui}`); a legacy bare `pixivflow`/`pixivflow.exe` executable is
-   accepted as a fallback.
+   `runtime-manifest.json` (`{name, version, platform, command[], args[],
+   health, staticPath, servesWebui}`); a legacy bare
+   `pixivflow`/`pixivflow.exe` executable is accepted as a fallback.
 2. **user-configured** `backend.command` + `backend.args` (user override).
 3. `pixivflow` found on `PATH`.
 4. fallback: bundled **mock** backend (dev/testing only).
 
+`args[]` are appended to `command[]`; the manifest's optional `staticPath`
+(relative to the runtime dir, or absolute) overrides the desktop's bundled
+`resources/webui/dist` when it resolves to a directory.
+
 Resolution result (`BackendDescriptor{source, executable_path, command,
 version, static_path, serves_webui}`) is injected into the manager via
 `set_command_override(Some(LaunchSpec{command, env}))` before `start()`; the
-`LaunchSpec` carries the extra env (`STATIC_PATH=<resources/webui/dist>`) needed
-for 方案 A WebUI serving. The manager's own fallback (config `command` → mock) is
-unchanged. The `backend_doctor` Tauri command surfaces the same resolution plus
-live runtime status (`running` / `healthy`). The reported `version` is trusted
-from the runtime manifest when present (a bundled release binary may not support
-`--version` — it would boot a server instead); only version-less sources
-(PATH / config binaries) get an `--version` probe under a timeout.
+`LaunchSpec` carries the extra env (`STATIC_PATH=…`) needed for 方案 A WebUI
+serving. The manager's own fallback (config `command` → mock) is unchanged. The
+`backend_doctor` Tauri command surfaces the same resolution plus live runtime
+status (`running` / `healthy`) **and two F2.3 reports**:
+
+- `runtime` (`validate_bundled_runtime()`): manifest found/valid, entry file
+  exists, version, declared platform vs. current host (lenient), servesWebui.
+- `webui`: STATIC_PATH on-disk presence and live `GET /` accessibility while
+  the backend is running and healthy.
+
+The reported `version` is trusted from the runtime manifest when present (a
+bundled release binary may not support `--version` — it would boot a server
+instead); only version-less sources (PATH / config binaries) get an
+`--version` probe under a timeout.
 
 ### Runtime acquisition (F2.3)
 
 The bundled runtime is filled by **`scripts/fetch-pixivflow-runtime.mjs`** (build
 from a local PixivFlow checkout, or fetch an npm spec). It lays out
 `resources/runtime/pixivflow/{dist, node_modules, package.json, VERSION}` and
-rewrites `runtime-manifest.json` to `["node","./dist/webui/index.js"]`. Those are
-**git-ignored build products**; the committed default manifest still points at the
-lightweight dev stand-in (`dev-backend.mjs`), so a fresh clone runs without the
-heavy artifact until the fetch runs. npm-workspace packages the built dist depends
-on (e.g. `@redtidev/pixiv-client`) are materialized into the runtime's
-`node_modules` so the bundle is self-contained.
+rewrites `runtime-manifest.json` to `command:["node"]` +
+`args:["./dist/webui/index.js"]`. Those are **git-ignored build products**; the
+committed default manifest still points at the lightweight dev stand-in
+(`dev-backend.mjs`), so a fresh clone runs without the heavy artifact until the
+fetch runs. npm-workspace packages the built dist depends on (e.g.
+`@redtidev/pixiv-client`) are materialized into the runtime's `node_modules` so
+the bundle is self-contained.
+
+### Release contract (future — design only)
+
+A future release bundle adds `webui/` and `checksums.json` beside the runtime
+(`{relpath: sha256-hex}`), fetched/verified at install or into
+`~/.pixivflow/runtime/` for upgrades. **Not implemented**; desktop currently
+bundles via the fetch script only, and no auto-update exists.
 
 ### WebUI integration (方案 A) — F2.2
 

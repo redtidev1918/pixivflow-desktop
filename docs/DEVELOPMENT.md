@@ -88,10 +88,18 @@ node scripts/fetch-pixivflow-runtime.mjs --source pixivflow@2.46.0
 
 This builds/copies `dist/` + prod-only `node_modules/` + `package.json` into
 `resources/runtime/pixivflow/`, materializes npm-workspace deps, writes `VERSION`,
-and rewrites `runtime-manifest.json` to `["node","./dist/webui/index.js"]`.
+and rewrites `runtime-manifest.json` to the formal F2.3 contract:
+`command:["node"]` + `args:["./dist/webui/index.js"]`, plus `version`,
+`platform`, `health`, `servesWebui`. The doctor validates this bundle
+(manifest/entry/platform) and reports WebUI presence + live accessibility.
 Restore the committed dev-stand-in default (e.g. before a clean commit) with:
 
 ```bash
 git checkout -- src-tauri/resources/runtime/pixivflow/runtime-manifest.json \
               src-tauri/resources/runtime/pixivflow/VERSION
 ```
+
+The real backend writes a default `config/standalone.config.json` into the CWD
+on first boot; a stray `config/` dir at the repo root is expected and safe to
+remove. Future releases may add `checksums.json` verification and a
+download/upgrade flow — that is design-only today.

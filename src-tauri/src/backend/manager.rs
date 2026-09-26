@@ -260,3 +260,12 @@ fn http_get(host: &str, port: u16, path: &str) -> Result<String, String> {
     s.read_to_string(&mut buf).map_err(|e| format!("recv: {e}"))?;
     Ok(buf.lines().next().unwrap_or("").to_string())
 }
+
+/// Raw HTTP GET probe usable for WebUI accessibility checks.
+/// Returns `(status_code, response_body_len)`, or None when unreachable.
+pub fn http_status(port: u16, path: &str) -> Option<(u16, usize)> {
+    let status = http_get("127.0.0.1", port, path).ok()?;
+    let mut parts = status.split_whitespace();
+    let code: u16 = parts.nth(1).and_then(|c| c.parse().ok())?;
+    Some((code, status.len()))
+}

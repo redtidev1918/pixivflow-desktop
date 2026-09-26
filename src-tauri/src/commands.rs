@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::backend::discovery::{self, DoctorReport};
+use crate::backend::discovery::{self, DoctorReport, WebuiReport};
+use crate::backend::manager;
 use crate::backend::{BackendSource, LaunchSpec, StatusSnapshot};
 use crate::config::AppConfig;
 use crate::ManagedState;
@@ -189,6 +190,27 @@ pub fn backend_doctor(state: State<'_, ManagedState>) -> DoctorReport {
     } else {
         (None, "not running — backend resolved but not started".into())
     };
+    // F2.3 WebUI report: STATIC_PATH presence + live root access while running.
+    let webui = if d.serves_webui {
+        let present = d
+            .static_path
+            .as_ref()
+            .is_some_and(|p| std::path::Path::new(p).is_dir());
+        let accessible = running && healthy == Some(true) && present
+            && manager::http_status(cfg.port(), "/")
+                .is_some_and(|(code, len)| code == 200 && len > 0);
+        WebuiReport {
+            static_path: d.static_path.clone(),
+            present,
+            accessible,
+        }
+    } else {
+        WebuiReport {
+            static_path: None,
+            present: false,
+            accessible: false,
+        }
+    };
     DoctorReport {
         backend_found: d.source != BackendSource::NotFound,
         executable_path: d.executable_path,
@@ -199,6 +221,8 @@ pub fn backend_doctor(state: State<'_, ManagedState>) -> DoctorReport {
         running,
         healthy,
         message,
+        runtime: discovery::validate_bundled_runtime(),
+        webui,
     }
 }
 

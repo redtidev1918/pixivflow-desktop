@@ -137,6 +137,27 @@ Forbidden:
 The bundled runtime wins so a shipped install is never perturbed by a stray
 `pixivflow` on PATH or in config.
 
+### Runtime manifest contract (F2.3)
+
+`runtime-manifest.json` fields — all except `name`/`command` are optional with
+defaults, so old manifests keep parsing:
+
+| field | meaning |
+|---|---|
+| `name` | runtime name (`pixivflow`) |
+| `version` | version string; trusted as-is — never `--version`-probe a bundled runtime (a real entry may boot a server instead of printing) |
+| `platform` | `os-arch` tag (e.g. `darwin-arm64`); checked leniently (`aarch64`≡`arm64`, `x86_64`≡`x64`) |
+| `command[]` | argv; `command[0]` is the executable, relative paths resolved against the runtime dir |
+| `args[]` | fixed argv appended after `command` |
+| `health` | health path, default `/api/health` |
+| `staticPath` | WebUI static dir (relative to the runtime dir or absolute); when unset/non-existent the desktop falls back to its own `resources/webui/dist` |
+| `servesWebui` | whether the backend serves the WebUI over `STATIC_PATH` (方案 A) |
+
+Desktop stays a **packaging layer**: never copy PixivFlow backend *source* into
+this repo — the fetch script lays built artifacts only. No auto-update yet.
+A future release may add `checksums.json` + a download/verify flow (design
+only — not implemented).
+
 ## Configuration Compatibility
 
 The following are **public interfaces** — treat them as versioned contracts:
@@ -182,10 +203,13 @@ UI / frontend changes must verify:
 
 ## Current Roadmap
 
-Current stage: **F2.3 — Real PixivFlow runtime acquisition** — done. `scripts/fetch-pixivflow-runtime.mjs` lays the real backend into
-`src-tauri/resources/runtime/pixivflow/` (git-ignored build product) and points
-the manifest at it; the committed default stays the dev stand-in (`dev-backend.mjs`),
-so a fresh clone runs light until the fetch runs. Next: Phase 3 UX / Phase 4 distribution.
+Current stage: **F2.3 — Real PixivFlow runtime contract** — done. The manifest
+formalizes `{version, platform, command[], args[], health, staticPath,
+servesWebui}`; `scripts/fetch-pixivflow-runtime.mjs` lays the real backend into
+`src-tauri/resources/runtime/pixivflow/` (git-ignored build product); doctor
+reports runtime validation + WebUI status. The committed default stays the dev
+stand-in (`dev-backend.mjs`), so a fresh clone runs light until the fetch runs.
+Checksums / download / auto-update are design-only. Next: Phase 3 UX / Phase 4 distribution.
 
 Not currently implemented (do not add without an explicit decision):
 

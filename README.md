@@ -4,8 +4,8 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)]()
 [![Made with Tauri 2](https://img.shields.io/badge/Made%20with-Tauri%202-purple)]()
 
-> PixivFlow Desktop is the **native desktop distribution** for **PixivFlow** —
-> the official desktop runtime environment and release layer.
+> **The native desktop distribution of PixivFlow** — the official desktop
+> runtime environment and release layer.
 
 It is **not**:
 
@@ -20,8 +20,8 @@ It is:
 - a **lifecycle manager** for the local PixivFlow backend process,
 - and the **WebUI distribution** that opens pixivflow-webui once the backend is healthy.
 
-Business logic stays in upstream PixivFlow. The desktop only launches, supervises,
-bundles and updates it.
+Business logic stays in upstream PixivFlow. The desktop only launches, supervises
+and bundles it.
 
 ## Features
 

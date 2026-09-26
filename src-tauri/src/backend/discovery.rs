@@ -50,7 +50,24 @@ impl BackendSource {
     }
 }
 
-/// The F2.2.1 runtime-manifest contract for a bundled backend.
+/// The F2.3 runtime-manifest contract for a bundled backend.
+///
+/// ```json
+/// {
+///   "name": "pixivflow",
+///   "version": "x.x.x",
+///   "platform": "darwin-arm64",
+///   "command": ["./pixivflow"],
+///   "args": ["--serve"],
+///   "health": "/api/health",
+///   "staticPath": "./webui",
+///   "servesWebui": true
+/// }
+/// ```
+/// All fields except `name`/`command` are optional and defaulted, so older
+/// manifests (F2.2 dev stand-in) keep working untouched. `command[0]` is the
+/// executable; `args` is appended as fixed argv. Relative entries resolve
+/// against the runtime dir.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeManifest {
@@ -59,10 +76,18 @@ pub struct RuntimeManifest {
     pub version: String,
     #[serde(default)]
     pub platform: String,
-    /// argv (relative paths resolved against the runtime dir).
+    /// argv[0] = executable; relative paths resolved against the runtime dir.
     pub command: Vec<String>,
+    /// Fixed argv appended after `command`.
+    #[serde(default)]
+    pub args: Vec<String>,
     #[serde(default = "default_health")]
     pub health: String,
+    /// WebUI static dir to serve as STATIC_PATH (方案 A). Relative to the
+    /// runtime dir, or absolute. When None, the desktop falls back to its own
+    /// bundled `resources/webui/dist`.
+    #[serde(default)]
+    pub static_path: Option<String>,
     /// Whether this backend can serve the WebUI over STATIC_PATH (方案 A).
     #[serde(default)]
     pub serves_webui: bool,
@@ -201,14 +226,10 @@ fn bundled_runtime() -> Option<BundledRuntime> {
         if let Ok(text) = std::fs::read_to_string(&manifest_path) {
             if let Ok(manifest) = serde_json::from_str::<RuntimeManifest>(&text) {
                 if !manifest.command.is_empty() {
-                    let (command, exe) = resolve_argv(&dir, &manifest.command);
-                    let static_path = if manifest.serves_webui {
-                        static_webui_path()
-                    } else {
-                        None
-                    };
+                    let (command, exe) = resolve_argv(&dir, &manifest.command, &manifest.args);
+                    let static_path = resolve_static_path(&dir, &manifest);
                     return Some(BundledRuntime {
-                        dir,
+                        dir: dir.clone(),
                         manifest,
                         command,
                         executable_path: exe,
@@ -228,7 +249,9 @@ fn bundled_runtime() -> Option<BundledRuntime> {
                 version: "unknown".into(),
                 platform: String::new(),
                 command: vec![bare.display().to_string()],
+                args: Vec::new(),
                 health: "/api/health".into(),
+                static_path: None,
                 serves_webui: false,
             },
             dir,
@@ -254,12 +277,14 @@ fn bundled_dir() -> Option<PathBuf> {
 }
 
 /// Resolve relative argv entries against `dir`. Returns (argv, entry-file).
-fn resolve_argv(dir: &Path, raw: &[String]) -> (Vec<String>, Option<String>) {
+fn resolve_argv(dir: &Path, command: &[String], args: &[String]) -> (Vec<String>, Option<String>) {
+    let mut raw: Vec<String> = command.iter().cloned().collect();
+    raw.extend(args.iter().cloned());
     let mut argv: Vec<String> = Vec::with_capacity(raw.len());
     let mut exe: Option<String> = None;
     for elem in raw {
         let has_sep = elem.contains('/') || elem.contains('\\');
-        let joined = dir.join(elem);
+        let joined = dir.join(&elem);
         if has_sep && joined.is_file() {
             argv.push(joined.display().to_string());
             if exe.is_none() {
@@ -270,6 +295,26 @@ fn resolve_argv(dir: &Path, raw: &[String]) -> (Vec<String>, Option<String>) {
         }
     }
     (argv, exe)
+}
+
+/// Resolve the STATIC_PATH a bundled backend should serve (方案 A).
+///
+/// Precedence: the manifest's `staticPath` (relative → absoluted against the
+/// runtime dir, or already absolute), else the desktop's bundled webui dist.
+fn resolve_static_path(dir: &Path, manifest: &RuntimeManifest) -> Option<String> {
+    if !manifest.serves_webui {
+        return None;
+    }
+    if let Some(sp) = manifest.static_path.as_ref() {
+        if !sp.trim().is_empty() {
+            let p = PathBuf::from(sp);
+            let abs = if p.is_absolute() { p } else { dir.join(sp) };
+            if abs.is_dir() {
+                return Some(abs.display().to_string());
+            }
+        }
+    }
+    static_webui_path()
 }
 
 /// Absolute path of the bundled WebUI dist, if present (方案 A STATIC_PATH).
@@ -361,6 +406,122 @@ pub fn probe_version(argv: &[String]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Static-file validity for the bundled runtime's WebUI (方案 A).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebuiReport {
+    /// STATIC_PATH the backend would serve (None when not a webui backend).
+    pub static_path: Option<String>,
+    /// On-disk presence of the static dir the backend will serve.
+    pub present: bool,
+    /// Live check while running: root route returned 200 with content.
+    pub accessible: bool,
+}
+
+/// F2.3 runtime-bundle validation (`~/pixivflow doctor` runtime pane).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeReport {
+    pub manifest_found: bool,
+    pub manifest_valid: bool,
+    /// The command entry (exe) resolves to an existing file under the runtime.
+    pub entry_found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Platform declared in the manifest ("" when unset).
+    pub platform: String,
+    /// Declared platform matches the running OS/arch (lenient).
+    pub platform_match: bool,
+    pub serves_webui: bool,
+}
+
+/// Validate the bundled runtime bundle (F2.3 release contract).
+pub fn validate_bundled_runtime() -> RuntimeReport {
+    let Some(dir) = bundled_dir() else {
+        return RuntimeReport {
+            manifest_found: false,
+            manifest_valid: false,
+            entry_found: false,
+            version: None,
+            platform: String::new(),
+            platform_match: false,
+            serves_webui: false,
+        };
+    };
+
+    let manifest_path = dir.join("runtime-manifest.json");
+    let manifest_found = manifest_path.is_file();
+    if !manifest_found {
+        return RuntimeReport {
+            manifest_found,
+            manifest_valid: false,
+            entry_found: false,
+            version: None,
+            platform: String::new(),
+            platform_match: false,
+            serves_webui: false,
+        };
+    }
+
+    let text = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+    match serde_json::from_str::<RuntimeManifest>(&text) {
+        Ok(m) => {
+            let (argv, exe) = resolve_argv(&dir, &m.command, &m.args);
+            let entry_found = exe.as_ref().is_some_and(|e| Path::new(e).is_file())
+                || argv.first().is_some();
+            let platform_match =
+                m.platform.is_empty() || platform_equivalent(&m.platform, &current_platform());
+            RuntimeReport {
+                manifest_found: true,
+                manifest_valid: true,
+                entry_found,
+                version: Some(m.version).filter(|v| !v.is_empty()),
+                platform: m.platform,
+                platform_match,
+                serves_webui: m.serves_webui,
+            }
+        }
+        Err(_) => RuntimeReport {
+            manifest_found: true,
+            manifest_valid: false,
+            entry_found: false,
+            version: None,
+            platform: String::new(),
+            platform_match: false,
+            serves_webui: false,
+        },
+    }
+}
+
+/// Lenient equality between a manifest platform tag and the current one
+/// (`darwin`≡`macos`, `aarch64`≡`arm64`, `x86_64`≡`x64` are treated as equal).
+fn platform_equivalent(declared: &str, actual: &str) -> bool {
+    let norm = |s: &str| {
+        s.to_ascii_lowercase()
+            .replace("macos", "darwin")
+            .replace("aarch64", "arm64")
+            .replace("x86_64", "x64")
+    };
+    let d = norm(declared);
+    let a = norm(actual);
+    d.is_empty() || d == a
+}
+
+/// `os-arch` tag for the running host using the manifest convention
+/// (`darwin-arm64`, matching Node's `process.platform`; Rust reports `macos`).
+pub fn current_platform() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        other => other,
+    };
+    format!("{os}-{arch}")
+}
+
 /// The `backend_doctor` command report: what was discovered + current runtime.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -381,6 +542,10 @@ pub struct DoctorReport {
     /// None=not probing (not running).
     pub healthy: Option<bool>,
     pub message: String,
+    /// F2.3 runtime-bundle validation (manifest/entry/platform/webui).
+    pub runtime: RuntimeReport,
+    /// F2.3 WebUI status (STATIC_PATH + live access while running).
+    pub webui: WebuiReport,
 }
 
 /// Convenience: discover + probe version for real backends + set serves_webui.

@@ -125,18 +125,30 @@ Acquire the real backend and wire it in via the runtime manifest.
   [--source <dir|npm-spec>]`. Builds the real backend (from a local PixivFlow
   checkout, or fetches an npm spec) and lays it into
   `resources/runtime/pixivflow/{dist, node_modules, package.json, VERSION}`,
-  rewriting `runtime-manifest.json` to `["node","./dist/webui/index.js"]`.
-  npm-workspace deps the built dist needs (e.g. `@redtidev/pixiv-client`) are
-  materialized so the runtime is self-contained.
+  rewriting `runtime-manifest.json` to the formal contract `command:["node"]` +
+  `args:["./dist/webui/index.js"]`. npm-workspace deps the built dist needs (e.g.
+  `@redtidev/pixiv-client`) are materialized so the runtime is self-contained.
+- **formal runtime contract** — manifest fields `{name, version, platform,
+  command[], args[], health, staticPath, servesWebui}` (only `name`/`command`
+  required). `staticPath` may point at a runtime-relative WebUI dir; otherwise the
+  desktop falls back to `resources/webui/dist`. Platform tags use the Node
+  convention (`darwin-arm64`) and are matched leniently against the host.
+- **runtime validation + richer doctor** — `backend_doctor` returns a `runtime`
+  report (manifest found/valid, entry exists, version, platform match,
+  servesWebui) and a `webui` report (STATIC_PATH on-disk, live `GET /`
+  accessible). Checksums/download/auto-update remain **design-only** for the
+  future release bundle; the desktop stays a packaging layer (no backend source
+  copied in).
 - **git-ignored artifact** — the laid-out runtime is a local build product. The
   committed default manifest stays the dev stand-in (`dev-backend.mjs`), so a
   fresh clone runs light until the fetch runs.
-- **version from manifest** — `discover_with_version` now trusts the manifest
-  version (a real release binary may not support `--version`); only version-less
-  sources get an `--version` probe.
+- **version from manifest** — `discover_with_version` trusts the manifest version
+  (a real release binary may not support `--version`); only version-less sources
+  get an `--version` probe.
 - **tests robust to both** — `backend_test.rs` exercises the dev stand-in
-  explicitly and asserts the bundled-runtime contract agnostically, so `cargo test`
-  passes whether or not the real runtime is laid out.
+  explicitly, asserts the bundled-runtime contract agnostically, and validates
+  the bundle report, so `cargo test` (10 tests) passes whether or not the real
+  runtime is laid out.
 
 Live-verified: fetched real `pixivflow@2.46.0`; the self-contained runtime boots
 from `resources/runtime/pixivflow/dist`, `/api/health` → 200, `GET /` serves the

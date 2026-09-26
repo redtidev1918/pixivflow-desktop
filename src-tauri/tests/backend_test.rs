@@ -212,3 +212,16 @@ fn doctor_resolves_bundled_runtime_and_version() {
     // a real release binary). Assert it surfaces SOME version.
     assert!(d.version.is_some(), "doctor needs a version from the manifest");
 }
+
+#[test]
+fn bundled_runtime_validation_reports_manifest_and_platform() {
+    let r = pixivflow_desktop::backend::validate_bundled_runtime();
+    assert!(r.manifest_found, "committed runtime-manifest.json must exist");
+    assert!(r.manifest_valid, "committed manifest must parse");
+    assert!(r.entry_found, "manifest command entry must resolve");
+    assert!(r.version.is_some());
+    // Manifest tag uses the Node convention (darwin-arm64); validation
+    // normalizes Rust's macos-aarch64 and must consider it a match.
+    assert!(r.platform_match, "declared {} must match host {}", r.platform, pixivflow_desktop::backend::current_platform());
+    assert!(r.serves_webui);
+}

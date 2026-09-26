@@ -159,8 +159,11 @@ const manifest = {
   name: 'pixivflow',
   version,
   platform: platformTag(),
-  command: ['node', './dist/webui/index.js'],
+  command: ['node'],
+  args: ['./dist/webui/index.js'],
   health: '/api/health',
+  // real backend finds its own fallback webui-frontend; desktop prefers its
+  // bundled dist, so no staticPath here (desktop fallback applies).
   servesWebui: true,
 };
 
