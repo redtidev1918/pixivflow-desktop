@@ -86,59 +86,15 @@ function readdirHas(dir, name) {
   try { return readdirSync(dir).includes(name); } catch { return false; }
 }
 
-// Top-level package names inside a tree of `node_modules`, scoped names kept whole.
-function packageNamesIn(nodeModulesDir) {
-  const names = [];
-  for (const entry of readdirSync(nodeModulesDir)) {
-    if (entry === '.bin' || entry === '.package-lock.json') continue;
-    if (entry.startsWith('@')) {
-      let subs = [];
-      try { subs = readdirSync(join(nodeModulesDir, entry)); } catch { continue; }
-      for (const sub of subs) names.push(`${entry}/${sub}`);
-    } else {
-      names.push(entry);
-    }
-  }
-  return names;
-}
-
-function installProdDeps(pkgJsonPath, lockPath, destDir, packagedNodeModules) {
-  // `pixivflow` declares `bundleDependencies: ["@redtidev/pixiv-client"]`, and
-  // that workspace package is deliberately not on the registry: resolving the
-  // published manifest against the registry alone fails with
-  // `@redtidev/pixiv-client@0.1.0 is not in this registry` (404). The tarball
-  // ships that bundle inside its own `node_modules`, so the package's bundled
-  // set is taken from the tarball and everything else from the registry.
-  const bundled = packagedNodeModules && existsSync(packagedNodeModules)
-    ? packageNamesIn(packagedNodeModules)
-    : [];
-
+function installProdDeps(pkgJsonPath, lockPath, destDir) {
   // Assemble prod-only node_modules in an isolated staging dir.
   const stage = mkdtempSync(join(tmpdir(), 'pfx-prod-'));
   try {
-    const stagedPkg = readJson(pkgJsonPath);
-    const dropped = [];
-    if (bundled.length) {
-      stagedPkg.dependencies = { ...(stagedPkg.dependencies ?? {}) };
-      for (const name of bundled) {
-        if (stagedPkg.dependencies[name]) {
-          delete stagedPkg.dependencies[name];
-          dropped.push(name);
-        }
-      }
-      writeFileSync(join(stage, 'package.json'), JSON.stringify(stagedPkg, null, 2) + '\n');
-      if (dropped.length) log(`bundled by the tarball, taken from it: ${dropped.join(', ')}`);
-    } else {
-      cpSync(pkgJsonPath, join(stage, 'package.json'));
-    }
-
-    const haveLock = Boolean(lockPath) && existsSync(lockPath) && !dropped.length;
+    cpSync(pkgJsonPath, join(stage, 'package.json'));
+    const haveLock = Boolean(lockPath) && existsSync(lockPath);
     if (haveLock) {
       cpSync(lockPath, join(stage, 'package-lock.json'));
     }
-    // `npm ci` requires a lockfile and an unmodified manifest. The published
-    // tarball ships neither, so the npm-source path (the CI path — a runner has
-    // no sibling checkout to read a lock from) installs from the manifest.
     run(
       haveLock
         ? 'npm ci --omit=dev --no-audit --no-fund'
@@ -149,17 +105,37 @@ function installProdDeps(pkgJsonPath, lockPath, destDir, packagedNodeModules) {
     // from an earlier fetch can never survive into the next bundle.
     rmSync(join(destDir, 'node_modules'), { recursive: true, force: true });
     cpSync(join(stage, 'node_modules'), join(destDir, 'node_modules'), { recursive: true });
-    if (bundled.length) {
-      // Overlay the publisher's bundled set (it carries the unpublished package
-      // and its own transitive deps).
-      cpSync(packagedNodeModules, join(destDir, 'node_modules'), { recursive: true });
-      log(`bundled set overlaid from the tarball: ${bundled.length} package(s)`);
-    }
     materializeSymlinks(join(destDir, 'node_modules'));
     log(`node_modules copied (prod-only) -> ${join(destDir, 'node_modules')}`);
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }
+}
+
+// Materialize a published package's production tree from the tree npm itself
+// produced by `npm install <spec>`.
+//
+// Extracting the packed tarball with `tar` is not portable: the GitHub Windows
+// runners use GNU tar from Git for Windows, which reads a drive-letter archive
+// path (`C:\...`) as a remote host and dies with
+// `tar (child): Cannot connect to C: resolve failed`. npm's own extraction has
+// no such problem, and it also honours `bundleDependencies` — `pixivflow`
+// bundles `@redtidev/pixiv-client`, a workspace package that is deliberately
+// not on the registry, so a manifest-only install 404s on it.
+function installFromPublishedTree(stageNodeModules, pkgPath, destDir) {
+  const dest = join(destDir, 'node_modules');
+  rmSync(dest, { recursive: true, force: true });
+  cpSync(stageNodeModules, dest, { recursive: true });
+  // Bundled packages stay nested inside the package dir; the runtime requires
+  // them from the flat tree, so lift them out before dropping the package copy.
+  const nested = join(pkgPath, 'node_modules');
+  if (existsSync(nested)) {
+    cpSync(nested, dest, { recursive: true });
+    log(`bundled set lifted from the published package -> ${dest}`);
+  }
+  rmSync(join(dest, 'pixivflow'), { recursive: true, force: true });
+  materializeSymlinks(dest);
+  log(`node_modules installed from the published package -> ${dest}`);
 }
 
 // Collapse every symlink in the copied tree into a real file/directory.
@@ -232,7 +208,7 @@ const srcSpec = argValue('source');
 const src = resolveSource(srcSpec, __dirname);
 const workDir = existsSync(RUNTIME_DIR) ? RUNTIME_DIR : fail(`missing ${RUNTIME_DIR}`);
 
-let pkgDir, pkg;
+let pkgDir, pkg, npmStageNodeModules = null;
 if (src.kind === 'dir') {
   const pj = join(src.path, 'package.json');
   if (!existsSync(pj)) fail(`not a package dir: ${src.path}`);
@@ -241,20 +217,22 @@ if (src.kind === 'dir') {
   ensureBuiltDist(src.path);
   pkgDir = src.path;
 } else {
-  // npm spec: pack + extract into a temp dir.
+  // npm spec: let npm materialize the package. `npm install <spec>` extracts the
+  // published tarball portably (a Windows runner's GNU tar cannot read a
+  // `C:\...` archive path) and installs the production dependencies that live
+  // on the registry; the package's bundled set travels inside its own dir.
   const stage = mkdtempSync(join(tmpdir(), 'pfx-pull-'));
   try {
-    const tarball = execSync(`npm pack ${src.spec} --pack-destination ${stage} --no-audit --no-fund 2>&1`, { encoding: 'utf8' })
-      .trim().split('\n').pop().trim();
-    const pdir = join(stage, 'package');
-    mkdirSync(pdir, { recursive: true });
-    execSync(`tar -xzf ${join(stage, tarball)} -C ${pdir} --strip-components=1`, { stdio: 'inherit' });
-    const pj = join(pdir, 'package.json');
-    if (!existsSync(pj)) fail('npm pack did not contain package.json');
-    pkg = readJson(pj);
+    run(`npm install --no-audit --no-fund --no-package-lock --omit=dev ${src.spec}`, { cwd: stage });
+    const pdir = join(stage, 'node_modules', 'pixivflow');
+    if (!existsSync(join(pdir, 'package.json'))) {
+      fail(`npm install ${src.spec} did not materialize a pixivflow package`);
+    }
+    pkg = readJson(join(pdir, 'package.json'));
     pkgDir = pdir;
+    npmStageNodeModules = join(stage, 'node_modules');
   } catch (e) {
-    fail(`npm pack failed: ${e.stderr || e.message}`);
+    fail(`npm install ${src.spec} failed: ${e.stderr || e.message}`);
   }
 }
 
@@ -285,12 +263,11 @@ cpSync(join(pkgDir, 'package.json'), join(workDir, 'package.json'));
 writeFileSync(join(workDir, 'VERSION'), version + '\n');
 writeFileSync(join(workDir, 'runtime-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 
-installProdDeps(
-  join(pkgDir, 'package.json'),
-  join(pkgDir, 'package-lock.json'),
-  workDir,
-  src.kind === 'npm' ? join(pkgDir, 'node_modules') : null,
-);
+if (src.kind === 'npm') {
+  installFromPublishedTree(npmStageNodeModules, pkgDir, workDir);
+} else {
+  installProdDeps(join(pkgDir, 'package.json'), join(pkgDir, 'package-lock.json'), workDir);
+}
 
 // restore workspace-local deps (local checkouts only) so dist is self-contained
 const sourceRoot = src.kind === 'dir' ? src.path : null;
