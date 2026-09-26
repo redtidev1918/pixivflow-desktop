@@ -50,13 +50,26 @@ cargo tauri build --bundles app   # macOS .app only (fastest packaging check)
 3. `discovery.rs` resolves which backend to run:
    `bundled runtime-manifest.json` → `backend.command` → `PATH` → dev mock.
 4. `BackendManager.start()` spawns it and `poll_health` probes `/api/health`.
-5. The control UI shows status / port / PID / health / source / version; the
-   **打开 PixivFlow** button opens the backend-served WebUI in a webview window.
+5. As soon as the first health probe succeeds the backend-served WebUI opens
+   **automatically** in its own webview window; the launcher stays behind it.
+   Closing the WebUI window returns to the launcher and keeps the backend
+   running — the **打开 PixivFlow** button re-opens it. Closing the *launcher*
+   stops the backend and closes the WebUI window.
+6. If a previous run crashed or was force-quit, its backend is still holding the
+   port: the next launch **adopts** that process instead of failing. The log says
+   `auto-start: backend adopted pid=…` instead of `started`.
 
 ## Debugging the backend
 
+- **Data root:** the backend runs with its CWD set to
+  `~/Library/Application Support/dev.redtidev.pixivflowdesktop/pixivflow/`
+  (macOS; `app_local_data_dir()/pixivflow` elsewhere). PixivFlow's `config/`,
+  `data/` and `downloads/` live there — **not** next to the repo or the `.app`.
 - **Health:** the backend answers `GET /api/health` on the configured port
   (default `3000`). Confirm with `curl http://127.0.0.1:3000/api/health`.
+- **Port stuck after a crash:** the app adopts the surviving backend on the next
+  launch, so a stuck port is usually harmless. To clear it manually:
+  `lsof -nP -iTCP:3000 -sTCP:LISTEN` then `kill <pid>`.
 - **WebUI static:** the backend serves the bundled WebUI dist over `STATIC_PATH`
   — `curl http://127.0.0.1:3000/` should return the WebUI `index.html`.
 - **Logs:** the desktop app appends to `logs/desktop.log` (startup, discovery
@@ -81,6 +94,23 @@ proves the F2.2 bundled contract — `--version`, `/api/health`, and static WebU
 serving over `STATIC_PATH`. It is the committed default so a fresh clone runs
 light (no heavy artifact required).
 
+## Bundling the real WebUI (F4.1)
+
+The committed `src-tauri/resources/webui/dist/index.html` is only a placeholder
+— the real UI comes from the `pixivflow-webui` repo and stays a git-ignored
+build product:
+
+```bash
+cd ../pixivflow-webui && npm ci && npm run build
+rm -rf ../pixivflow-desktop/src-tauri/resources/webui/dist
+cp -R dist ../pixivflow-desktop/src-tauri/resources/webui/dist
+```
+
+The backend serves that directory over `STATIC_PATH`. Restore the committed
+placeholder with
+`git checkout -- src-tauri/resources/webui/dist/index.html` and remove
+`src-tauri/resources/webui/dist/assets/`.
+
 ## Bundling the real PixivFlow runtime (F2.3)
 
 To lay the real backend into the bundle (a git-ignored local artifact) and point
@@ -94,10 +124,12 @@ node scripts/fetch-pixivflow-runtime.mjs --source pixivflow@2.46.0
 ```
 
 This builds/copies `dist/` + prod-only `node_modules/` + `package.json` into
-`resources/runtime/pixivflow/`, materializes npm-workspace deps, writes `VERSION`,
-and rewrites `runtime-manifest.json` to the formal F2.3 contract:
-`command:["node"]` + `args:["./dist/webui/index.js"]`, plus `version`,
-`platform`, `health`, `servesWebui`. The doctor validates this bundle
+`resources/runtime/pixivflow/`, materializes npm-workspace deps, copies a
+**standalone `node` binary** next to them (so the app needs no system Node and
+no launcher shim that would re-parent the backend), writes `VERSION`, and
+rewrites `runtime-manifest.json` to the formal contract: `command:["./node"]` +
+`args:["./dist/webui/index.js"]`, plus `version`, `platform`, `health`,
+`servesWebui`. The doctor validates this bundle
 (manifest/entry/platform) and reports WebUI presence + live accessibility.
 Restore the committed dev-stand-in default (e.g. before a clean commit) with:
 
@@ -106,7 +138,8 @@ git checkout -- src-tauri/resources/runtime/pixivflow/runtime-manifest.json \
               src-tauri/resources/runtime/pixivflow/VERSION
 ```
 
-The real backend writes a default `config/standalone.config.json` into the CWD
-on first boot; a stray `config/` dir at the repo root is expected and safe to
-remove. Future releases may add `checksums.json` verification and a
+The real backend writes a default `config/standalone.config.json` into its CWD
+on first boot. Launched by the app that is the per-user data root above; if you
+run the runtime **manually from this repo**, it lands in the repo and a stray
+`config/` dir is safe to remove. Future releases may add `checksums.json` verification and a
 download/upgrade flow — that is design-only today.

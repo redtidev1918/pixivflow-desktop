@@ -39,10 +39,8 @@
     ],
     "resources": {
       "resources/mock-backend.mjs": "mock-backend.mjs",
-      "resources/runtime/pixivflow/runtime-manifest.json": "runtime/pixivflow/runtime-manifest.json",
-      "resources/runtime/pixivflow/VERSION": "runtime/pixivflow/VERSION",
-      "resources/runtime/pixivflow/dev-backend.mjs": "runtime/pixivflow/dev-backend.mjs",
-      "resources/webui/dist/index.html": "webui/dist/index.html"
+      "resources/runtime/pixivflow": "runtime/pixivflow",
+      "resources/webui": "webui"
     }
   }
 }

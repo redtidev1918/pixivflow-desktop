@@ -28,6 +28,15 @@ use crate::config::AppConfig;
 /// discovery runs; when unset, the compile-time manifest / CWD paths are used.
 static RESOURCE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
+/// User-writable data root for the real backend.
+///
+/// The real PixivFlow backend otherwise writes `./data`, `./downloads` and
+/// `config/standalone.config.json` into its CWD (the bundle dir when launched
+/// as an installed app — wrong, and usually read-only). Set once at startup to
+/// the platform app-data dir; discovery then injects absolute config/storage
+/// paths under it. Unset in dev/tests → no paths injected.
+static DATA_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
 /// Install the runtime bundle resource root (Tauri `resource_dir()`). No-op after
 /// the first successful set; called once from the Tauri setup hook.
 pub fn set_resource_root(dir: PathBuf) {
@@ -37,6 +46,17 @@ pub fn set_resource_root(dir: PathBuf) {
 /// The currently installed runtime resource root, if any.
 pub fn resource_root() -> Option<&'static PathBuf> {
     RESOURCE_ROOT.get()
+}
+
+/// Install the user-writable backend data root (platform app-data dir).
+/// No-op after the first successful set; called once from the setup hook.
+pub fn set_data_root(dir: PathBuf) {
+    let _ = DATA_ROOT.set(dir);
+}
+
+/// The currently installed backend data root, if any.
+pub fn data_root() -> Option<&'static PathBuf> {
+    DATA_ROOT.get()
 }
 
 /// Where an executable was found.
@@ -152,13 +172,27 @@ impl BackendDescriptor {
     pub fn is_real(&self) -> bool {
         self.source.is_real()
     }
-    /// The extra env to inject when spawning (STATIC_PATH for 方案 A, else empty).
+    /// The extra env to inject when spawning (STATIC_PATH for 方案 A).
+    ///
+    /// Storage/config paths are NOT redirected via env: the real backend's
+    /// auto-path-fixer rejects absolute paths outside its CWD, so callers spawn
+    /// it with CWD = [`data_dir`] and its relative `./data`, `./downloads`,
+    /// `config/` defaults land there untouched.
     pub fn extra_env(&self) -> BTreeMap<String, String> {
         let mut env = BTreeMap::new();
         if let Some(p) = self.static_path.as_ref() {
             env.insert("STATIC_PATH".into(), p.clone());
         }
         env
+    }
+
+    /// Working directory for the real backend: the user-writable data root so
+    /// its CWD-relative data/config/download defaults land outside the bundle.
+    pub fn cwd(&self) -> Option<PathBuf> {
+        DATA_ROOT.get().map(|r| {
+            let _ = std::fs::create_dir_all(r);
+            r.clone()
+        })
     }
 }
 

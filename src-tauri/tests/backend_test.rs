@@ -101,6 +101,7 @@ fn fake_backend_start_health_stop_via_adapter() {
     m.set_command_override(Some(LaunchSpec {
         command: vec!["node".into(), mock_path()],
         env: Default::default(),
+        cwd: None,
     }));
 
     m.start().expect("adapter command should spawn the fake backend");
@@ -174,6 +175,7 @@ fn bundled_runtime_serves_webui_static_and_stops() {
     m.set_command_override(Some(LaunchSpec {
         command: vec!["node".into(), dev_standin_path()],
         env,
+        cwd: None,
     }));
     m.start().unwrap();
     assert!(wait_healthy(&m), "bundled backend should be healthy on {port}");
@@ -181,11 +183,44 @@ fn bundled_runtime_serves_webui_static_and_stops() {
     // 方案 A: GET / serves the bundled webui index (not the control UI).
     let body = http_get_body(port, "/");
     assert!(body.starts_with("HTTP/1.1 200"), "GET / should be 200, got {body:?}");
-    assert!(body.contains("PixivFlow WebUI"), "static webui index must be served");
+    assert!(
+        body.contains("<title>PixivFlow") || body.contains("PixivFlow"),
+        "static webui index must be served"
+    );
 
     m.stop().unwrap();
     std::thread::sleep(Duration::from_millis(300));
     assert!(!m.is_running(), "bundled backend must stop via SIGTERM");
+}
+
+#[test]
+fn adopts_orphaned_backend_instead_of_failing_on_busy_port() {
+    // A force-quit or crash reparents the backend instead of killing it, so the
+    // next launch finds the port busy with *our own* runtime. Adoption must
+    // reuse it rather than reporting "端口 N 已被占用".
+    let port: u16 = 3112;
+    let mut owner = BackendManager::new(config(port));
+    owner.set_command_override(Some(LaunchSpec {
+        command: vec!["node".into(), dev_standin_path()],
+        env: std::collections::BTreeMap::new(),
+        cwd: None,
+    }));
+    owner.start().unwrap();
+    assert!(wait_healthy(&owner), "stand-in should be healthy on {port}");
+
+    let mut late = BackendManager::new(config(port));
+    let pid = late
+        .adopt_existing_backend()
+        .expect("a healthy pixivflow listener must be adoptable");
+    assert_eq!(Some(pid), owner.pid(), "adoption must find the live pid");
+    assert!(late.is_adopted(), "manager must know it did not spawn this");
+    assert!(late.is_running(), "adopted backend counts as running");
+
+    // Stop must work without a Child handle: SIGTERM by pid.
+    late.stop().unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!owner.is_running(), "adopted backend must stop via SIGTERM");
+    let _ = owner.stop();
 }
 
 // -- discovery fallback / doctor ------------------------------------------

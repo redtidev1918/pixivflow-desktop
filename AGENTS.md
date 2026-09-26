@@ -83,7 +83,10 @@ its API — never reimplemented here.
 `BackendManager` is a **pure lifecycle owner**. It is permanently limited to:
 
 - `spawn`
-- `stop`
+- `adopt` (take over our own runtime that survived a force-quit / crash)
+- `stop` (must run on window close **and** on app quit — a macOS quit never
+  reaches the window close handler, so `lib.rs` also handles
+  `RunEvent::ExitRequested` / `RunEvent::Exit`; `stop()` stays idempotent)
 - `restart`
 - `health check`
 - `status`
@@ -93,6 +96,8 @@ Forbidden forever:
 - adding business logic
 - altering backend behavior
 - handling / parsing Pixiv data
+- downloading / installing / upgrading the runtime — that belongs to a future
+  `RuntimeManager`, never here
 
 Deciding *which command to run* is the job of the discovery/adapter layer
 (`src-tauri/src/backend/discovery.rs`), which only resolves a command and injects
@@ -137,6 +142,18 @@ Forbidden:
 The bundled runtime wins so a shipped install is never perturbed by a stray
 `pixivflow` on PATH or in config.
 
+Only `STATIC_PATH` (and `PORT` / `HOST`) is injected into the backend's
+environment. **Storage paths are never injected**: PixivFlow's path auto-fixer
+rewrites absolute paths outside its `process.cwd()` back to `./data`, so the
+desktop instead spawns the backend **with its CWD set to the per-user data root**
+(`app_local_data_dir()/pixivflow`). PixivFlow's own `config/`, `data/` and
+`downloads/` defaults then land there.
+
+Adoption rule: `start()` adopts a live listener only when all three hold — the
+port is open, `GET /api/health` answers `200`, and the listener's command line
+contains `pixivflow`. Anything else stays a hard "port occupied" error, and
+adoption is never used to take over a foreign service.
+
 ### Runtime manifest contract (F2.3)
 
 `runtime-manifest.json` fields — all except `name`/`command` are optional with
@@ -152,6 +169,13 @@ defaults, so old manifests keep parsing:
 | `health` | health path, default `/api/health` |
 | `staticPath` | WebUI static dir (relative to the runtime dir or absolute); when unset/non-existent the desktop falls back to its own `resources/webui/dist` |
 | `servesWebui` | whether the backend serves the WebUI over `STATIC_PATH` (方案 A) |
+
+### Resource paths
+
+Installed-app resources must resolve through Tauri
+`app.path().resource_dir()` — **never** assume `CARGO_MANIFEST_DIR`, which only
+exists on a build machine. Resolution order: installed bundle root →
+compile-time manifest dir (dev/tests) → CWD-relative dev path.
 
 Desktop stays a **packaging layer**: never copy PixivFlow backend *source* into
 this repo — the fetch script lays built artifacts only. No auto-update yet.
@@ -194,6 +218,11 @@ Backend lifecycle changes must verify:
 - start
 - health check
 - graceful shutdown (SIGTERM, never `kill -9`)
+- adoption: a surviving backend is reused instead of erroring
+
+Packaging changes must be tested from the **installed bundle** (launch the built
+`.app`, not only a debug run): the bundled runtime boots, health returns 200, the
+WebUI opens, and closing the launcher stops the backend.
 
 UI / frontend changes must verify:
 
@@ -203,8 +232,11 @@ UI / frontend changes must verify:
 
 ## Current Roadmap
 
-Current stage: **F4.0 — Packaging closure (macOS first)** — the app bundles and
-runs from an installed `.app`. The earlier F2.3 work formalized the manifest
+Current stage: **F4.1 — Real runtime + real WebUI in the bundle** — the `.app`
+carries the real self-contained PixivFlow runtime (a standalone `node` beside
+`dist/` + `node_modules/`), the built WebUI dist, a per-user data root as the
+backend CWD, automatic WebUI opening after health, and adoption of a backend
+orphaned by a crash. The F2.3 work formalized the manifest
 `{version, platform, command[], args[], health, staticPath, servesWebui}` and
 `scripts/fetch-pixivflow-runtime.mjs` lays the real backend into
 `src-tauri/resources/runtime/pixivflow/` (git-ignored build product); doctor
@@ -213,7 +245,9 @@ runtime: installed bundle root (`app.path().resource_dir()`) → compile-time
 manifest dir → CWD-relative dev path, so the same code works in dev and in the
 `.app` / `.AppImage`. The committed default stays the dev stand-in
 (`dev-backend.mjs`). Checksums / download / auto-update are design-only.
-Remaining F4: real-runtime resource globs, DMG, GitHub Actions, Windows/Linux.
+Remaining F4 per `docs/ROADMAP.md`: runtime release assets (4.2), `RuntimeManager`
+(4.3), CI release matrix (4.4), branding (4.5), doctor expansion (4.6), and the
+DMG / Windows / Linux installers.
 
 Not currently implemented (do not add without an explicit decision):
 

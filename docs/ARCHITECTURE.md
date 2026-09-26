@@ -35,7 +35,7 @@ no scheduling, no downloads, no delivery, no media handling, no Pixiv auth.
 ┌──────────────────────────────────────────────────────────────┐
 │  Desktop Layer  (this repo · Tauri 2 + Rust + Vite shell)     │
 │  ─ Tauri window / app lifecycle                                │
-│  ─ BackendManager: spawn · stop · restart · health            │
+│  ─ BackendManager: spawn · stop · restart · health · adopt     │
 │  ─ discovery.rs: bundled → config → PATH → mock               │
 │  ─ config (desktop-config.json) · logging · native integration│
 │  ─ control shell (src/frontend) — status + 打开 PixivFlow     │
@@ -71,15 +71,24 @@ Layer responsibilities:
 
 1. **Resolve** — `discovery.rs` chooses the backend command:
    bundled `runtime-manifest.json` → `backend.command` → `PATH` → dev mock.
-2. **Spawn** — `BackendManager.start()` injects the resolved
-   `LaunchSpec{command, env}` (with `STATIC_PATH`) and launches the process
-   (idempotent; refuses if the port is already taken).
+2. **Adopt or spawn** — if a healthy PixivFlow runtime from a previous run is
+   still listening on the port (force-quit / crash), `start()` **adopts** it
+   instead of failing (see *Backend ownership* below). Otherwise it injects the
+   resolved `LaunchSpec{command, args, env, cwd}` (with `STATIC_PATH`) and
+   launches the process (idempotent; refuses if the port is held by something
+   that is not a PixivFlow runtime).
 3. **Health** — periodic `GET /api/health` probe (raw TCP) drives the UI
    `running / healthy` state; `backend_doctor` surfaces source / version / port.
 4. **Serve WebUI** — the backend hosts the static WebUI over `STATIC_PATH`;
-   the desktop opens `http://127.0.0.1:{port}/` (方案 A).
+   the desktop opens `http://127.0.0.1:{port}/` (方案 A) **automatically** as
+   soon as the first health probe succeeds — the user never has to click
+   "打开 PixivFlow".
 5. **Stop** — graceful **SIGTERM** with a bounded wait; never `kill -9`.
-   Closing the desktop window triggers the stop.
+   Closing the launcher window stops the backend (spawned *or* adopted) and
+   closes the WebUI window. Quitting the app (Cmd+Q, the app menu, or
+   `osascript quit`) stops it too: a macOS quit never reaches the window close
+   handler, so `lib.rs` also handles `RunEvent::ExitRequested` / `RunEvent::Exit`
+   with the same idempotent `stop()`.
 
 ## Backend communication
 
@@ -87,6 +96,12 @@ Layer responsibilities:
   API (health + WebUI). It never links, imports, or patches backend code.
 - The backend is configured via **environment / CLI overrides** (`PORT`,
   `HOST`, `STATIC_PATH`) — not by modifying upstream source.
+- The backend's **working directory is the per-user data root** (see below), so
+  PixivFlow's own relative defaults (`./data`, `./downloads`, `config/`) land
+  under the user's application-support directory instead of a random CWD. This
+  is deliberate: PixivFlow's path auto-fixer rejects absolute paths outside its
+  `process.cwd()`, so injecting *absolute* storage paths via env would be
+  rewritten back to `./data`.
 - The WebUI is **same-origin** with the backend, so the desktop window needs no
   cross-origin proxy for the product page.
 
@@ -140,9 +155,10 @@ So the same discovery code works unmodified in dev, tests and the installed
 
 Resolution result (`BackendDescriptor{source, executable_path, command,
 version, static_path, serves_webui}`) is injected into the manager via
-`set_command_override(Some(LaunchSpec{command, env}))` before `start()`; the
-`LaunchSpec` carries the extra env (`STATIC_PATH=…`) needed for 方案 A WebUI
-serving. The manager's own fallback (config `command` → mock) is unchanged. The
+`set_command_override(Some(LaunchSpec{command, args, env, cwd}))` before
+`start()`; the `LaunchSpec` carries the extra env (`STATIC_PATH=…`) needed for
+方案 A WebUI serving and the per-user data root as `cwd`. The manager's own
+fallback (config `command` → mock) is unchanged. The
 `backend_doctor` Tauri command surfaces the same resolution plus live runtime
 status (`running` / `healthy`) **and two F2.3 reports**:
 
@@ -160,9 +176,13 @@ instead); only version-less sources (PATH / config binaries) get an
 
 The bundled runtime is filled by **`scripts/fetch-pixivflow-runtime.mjs`** (build
 from a local PixivFlow checkout, or fetch an npm spec). It lays out
-`resources/runtime/pixivflow/{dist, node_modules, package.json, VERSION}` and
-rewrites `runtime-manifest.json` to `command:["node"]` +
-`args:["./dist/webui/index.js"]`. Those are **git-ignored build products**; the
+`resources/runtime/pixivflow/{dist, node_modules, package.json, VERSION, node}`
+and rewrites `runtime-manifest.json` to `command:["./node"]` +
+`args:["./dist/webui/index.js"]`. `node` is a **standalone Node binary copied
+into the runtime directory**, so the app carries its own interpreter: no `PATH`
+lookup, no dependency on a system Node install, and no launcher shim that
+re-parents the backend when the app dies. Those are **git-ignored build
+products**; the
 committed default manifest still points at the lightweight dev stand-in
 (`dev-backend.mjs`), so a fresh clone runs without the heavy artifact until the
 fetch runs. npm-workspace packages the built dist depends on (e.g.
@@ -185,9 +205,39 @@ expected to serve the static WebUI over `STATIC_PATH` (the bundled
 already open). The Tauri shell (Vite `src/frontend`) is only the *control /
 status* surface, separate from the WebUI product page.
 
+The WebUI window is opened **automatically** by the setup hook once health has
+been confirmed (`poll_health_for` → `open_webui_window` on the main thread); the
+launcher window stays behind it. Closing the WebUI window returns the user to
+the launcher and leaves the backend running; closing the **launcher** window
+also closes the WebUI window and stops the backend.
+
 Backend config shape (flat, per the desktop-config contract — `mode` is a
 **top-level** field, not under `backend`):
 
 ```json
 { "mode": "local", "backend": { "port": 3000, "autoStart": true, "command": "", "args": [] } }
 ```
+
+### Backend ownership & adoption (F4.1)
+
+`BackendManager` distinguishes the backend it **spawned** (owns the `Child`) from
+one it **adopted**. Adoption exists because a force-quit or a crash does not run
+the stop path: the backend is re-parented to `launchd`/`init` and keeps holding
+the port, so the next launch used to fail with "端口 3000 已被占用".
+`start()` therefore tries `adopt_existing_backend()` first, which requires:
+
+- the port is open, and
+- `GET /api/health` answers `200`, and
+- the listening pid's command line contains `pixivflow` (so an unrelated port
+  occupant is still a hard error).
+
+An adopted backend counts as `running`, reports its pid, and `stop()` SIGTERMs it
+by pid. `backend_doctor` / the launcher log distinguish `started` from `adopted`.
+
+### Per-user data root (F4.1)
+
+The setup hook resolves `app.path().app_local_data_dir()/pixivflow` (macOS:
+`~/Library/Application Support/dev.redtidev.pixivflowdesktop/pixivflow/`),
+creates it, and stores it as the process CWD for the backend. PixivFlow then
+creates its own `config/`, `data/` (SQLite) and `downloads/` there. Nothing is
+written next to the installed `.app`.

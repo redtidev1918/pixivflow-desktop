@@ -20,8 +20,8 @@
 
 import { execSync } from 'node:child_process';
 import {
-  cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync,
-  rmSync, writeFileSync,
+  chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  realpathSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -94,9 +94,24 @@ function installProdDeps(pkgJsonPath, lockPath, destDir) {
     }
     run(`npm ci --omit=dev --no-audit --no-fund`, { cwd: stage });
     cpSync(join(stage, 'node_modules'), join(destDir, 'node_modules'), { recursive: true });
+    pruneDanglingSymlinks(join(destDir, 'node_modules'));
     log(`node_modules copied (prod-only) -> ${join(destDir, 'node_modules')}`);
   } finally {
     rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+// Remove symlinks whose targets no longer exist. `npm ci` runs in a temp stage,
+// so .bin entries (and similar) copied out of it point at deleted paths; the
+// Tauri build script rejects such missing resources.
+function pruneDanglingSymlinks(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      pruneDanglingSymlinks(p);
+    } else if (entry.isSymbolicLink()) {
+      if (!existsSync(p)) rmSync(p, { force: true });
+    }
   }
 }
 
@@ -121,6 +136,20 @@ function materializeWorkspaceDeps(sourceRoot, destNodeModules) {
     cpSync(real, out, { recursive: true });
     log(`workspace dep materialized: @redtidev/${name}`);
   }
+}
+
+// Copy the running standalone node executable into the runtime dir and return
+// its manifest-relative command. `process.execPath` is resolved first so a
+// version-manager shim or wrapper doesn't get copied.
+function bundleNodeBinary(destDir) {
+  const isWin = process.platform === 'win32';
+  let real = process.execPath;
+  try { real = realpathSync(process.execPath); } catch {}
+  const name = isWin ? 'node.exe' : 'node';
+  cpSync(real, join(destDir, name));
+  if (!isWin) chmodSync(join(destDir, name), 0o755);
+  log(`standalone node bundled -> ${name} (${process.version})`);
+  return `./${name}`;
 }
 
 // --- main -----------------------------------------------------------------
@@ -155,11 +184,15 @@ if (src.kind === 'dir') {
 }
 
 const version = pkg.version;
+const nodeBin = bundleNodeBinary(workDir);
 const manifest = {
   name: 'pixivflow',
   version,
   platform: platformTag(),
-  command: ['node'],
+  // Invoke the runtime-local standalone node, not a PATH lookup: a PATH "node"
+  // may resolve to a foreign shim (which can reparent or kill the child), and a
+  // user machine may have no node at all. This keeps the runtime self-contained.
+  command: [nodeBin],
   args: ['./dist/webui/index.js'],
   health: '/api/health',
   // real backend finds its own fallback webui-frontend; desktop prefers its

@@ -26,19 +26,24 @@ and bundles it.
 ## Features
 
 - **Open-and-run (one-click launch)** — double-click the app: it reads its config,
-  auto-starts the bundled PixivFlow backend, health-checks it and opens the WebUI.
+  auto-starts the bundled PixivFlow backend, health-checks it and opens the WebUI
+  for you. The app carries its own Node runtime, so nothing has to be installed.
 - **Native desktop experience** — a fast, self-contained Tauri 2 app that boots
   straight into a PixivFlow Desktop bootstrap UI (never a blank window).
 - **Local backend lifecycle management** — the Rust `BackendManager` starts,
-  stops (graceful SIGTERM) and restarts the local backend process, and manages
-  its runtime discovery (bundled → config → PATH → dev mock fallback).
+  adopts (a backend left behind by a crash), stops (graceful SIGTERM — on window
+  close *and* on app quit) and
+  restarts the local backend process, and manages its runtime discovery
+  (bundled → config → PATH → dev mock fallback).
 - **Bundled runtime** — ships a packaged PixivFlow backend
   (`resources/runtime/pixivflow/`, described by `runtime-manifest.json`) and the
   WebUI dist, so an ordinary user needs no separate install.
 - **Runtime status monitoring** — live port / PID / health readout fed by the
   `/api/health` probe and pushed to the UI via the `backend-status` event.
 - **Configuration** — reads `desktop-config.json` (auto-created with defaults)
-  for backend port, auto-start, and command override.
+  for backend port, auto-start, and command override. Your PixivFlow data
+  (`config/`, `data/`, `downloads/`) lives in the per-user app data directory,
+  not next to the app.
 - **WebUI integration (方案 A)** — the desktop opens the bundled WebUI directly
   over `http://127.0.0.1:{port}/`, served by the backend via `STATIC_PATH` (no
   second frontend). A dedicated `webui` window is created/reused on demand.
@@ -111,13 +116,19 @@ automatic upgrade flow.
 
 ## Project status
 
-**F2.2 — Bundled runtime + WebUI integration (方案 A).** F0 (foundation) → F1
-(Desktop Shell MVP) → F1.1 (boot experience, white-screen fix, product naming)
-→ F2.1 (real backend adapter/discovery/doctor) → F2.2 (bundled runtime via
-`runtime-manifest.json`, discovery precedence bundled→config→PATH→mock, 方案 A
-WebUI served by the backend over `STATIC_PATH`, `open_webui` window). The
-current build manages the local backend lifecycle against the bundled
-dev-stand-in runtime and opens its served WebUI.
+**F4.1 — Real runtime + real WebUI in the bundle (macOS).** F0 (foundation) →
+F1 (Desktop Shell MVP) → F1.1 (boot experience, white-screen fix, product
+naming) → F2.1 (real backend adapter/discovery/doctor) → F2.2 (bundled runtime
+via `runtime-manifest.json`, discovery precedence
+bundled→config→PATH→mock, WebUI served by the backend over `STATIC_PATH`) →
+F2.3 (formal runtime contract) → F4.0 (macOS `.app` packaging closure) → F4.1:
+installed app bundles the real `pixivflow@2.46.0` runtime — including a
+standalone `node` — plus the built WebUI dist, keeps its data in the per-user
+app data directory, opens the WebUI automatically once health is confirmed, and
+adopts a backend orphaned by a crash instead of failing on a busy port.
+
+Windows / Linux installers, .dmg packaging and CI release builds are still
+ahead — see `docs/ROADMAP.md`.
 
 Still ahead (phases F2.3–F5): swapping the dev stand-in for the real release
 binary, auto-update, and one-click deployment — done after the bundled-manage

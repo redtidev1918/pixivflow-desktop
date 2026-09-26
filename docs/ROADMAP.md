@@ -147,13 +147,13 @@ Acquire the real backend and wire it in via the runtime manifest.
   get an `--version` probe.
 - **tests robust to both** — `backend_test.rs` exercises the dev stand-in
   explicitly, asserts the bundled-runtime contract agnostically, and validates
-  the bundle report, so `cargo test` (10 tests) passes whether or not the real
+  the bundle report, so `cargo test` (11 tests) passes whether or not the real
   runtime is laid out.
 
 Live-verified: fetched real `pixivflow@2.46.0`; the self-contained runtime boots
 from `resources/runtime/pixivflow/dist`, `/api/health` → 200, `GET /` serves the
-bundled WebUI dist, graceful SIGTERM stop. (Bundling the real *webui dist* remains
-an open follow-up — F2.2 step 方案 A keeps the placeholder `webui/dist`.)
+bundled WebUI dist, graceful SIGTERM stop. (Bundling the real *webui dist* landed
+in F4.1 below.)
 
 ## Phase 3 — UX ⬜
 
@@ -175,13 +175,47 @@ an open follow-up — F2.2 step 方案 A keeps the placeholder `webui/dist`.)
   `PixivFlow Desktop.app`; launched from the bundle the backend auto-starts,
   `/api/health` → 200, `GET /` serves the bundled WebUI, and closing stops it.
 
+### 4.1 Real runtime + real WebUI in the bundle ✅
+
+- **Self-contained runtime** — the fetch script copies a **standalone `node`**
+  next to the runtime and writes `command:["./node"]`, so the app carries its own
+  interpreter: no system Node, and no `PATH` shim that would re-parent the backend
+  when the app dies.
+- **Real WebUI** — the built `pixivflow-webui` dist is copied into
+  `resources/webui/dist` (git-ignored build products) and served by the backend
+  over `STATIC_PATH`.
+- **Resource map** — `bundle.resources` uses explicit **directories**
+  (`runtime/pixivflow`, `webui`), because a glob target flattens every file into
+  one directory (tauri-utils `dest.join(path.file_name())`).
+- **Per-user data root** — the backend is spawned with its CWD set to
+  `app_local_data_dir()/pixivflow`, so PixivFlow's own `config/` + `data/` +
+  `downloads/` defaults land there.
+- **Auto-open WebUI** — as soon as the first health probe returns 200, the WebUI
+  window opens on the main thread; the launcher stays behind it.
+- **Orphan adoption** — a backend left over from a force-quit/crash is adopted
+  (port open + `/api/health` 200 + listener command contains `pixivflow`) instead
+  of failing with "端口已被占用"; `stop()` SIGTERMs it by pid.
+- **Verified** — `PixivFlow Desktop.app` bundles `runtime/pixivflow/{node,dist,
+  node_modules,…}` + `webui/dist`; launched from the bundle the log reads
+  `backend resolved: source=bundled exe=…/runtime/pixivflow/./node`, `health OK
+  (/api/health -> 200)`, `scale factors: launcher=Some(2.0) webui=Some(2.0)`,
+  `auto-open: WebUI at http://127.0.0.1:3000/`; a force-quit relaunch reports
+  `backend adopted pid=…`.
+
 ### Remaining
 
-- Windows installer (.exe).
-- macOS .dmg.
-- Linux AppImage.
-- GitHub Actions release workflow.
-- Real-runtime resource globs (the fetched `dist` / `node_modules`).
+- **4.2 Runtime release artifacts** — publish the runtime as GitHub Release
+  assets (`PixivFlow-runtime-<platform>.tar.zst` / `.zip`) instead of git.
+- **4.3 RuntimeManager** — a separate module for runtime discovery / download /
+  checksum verification / install / upgrade; `BackendManager` stays lifecycle-only.
+- **4.4 CI release matrix** — one tag → macOS (.dmg) / Windows (.exe) / Linux
+  (AppImage, .deb) via `release.yml`.
+- **4.5 Naming & branding** — bundle id `com.redtidev1918.pixivflow.desktop`,
+  window title `PixivFlow Desktop`, later a `pixivflow-desktop doctor` CLI.
+- **4.6 Doctor / diagnostics** — extend `backend_doctor` toward
+  `flutter doctor`-style checks (resources, runtime, port, health, WebUI,
+  permissions, network).
+- macOS .dmg / Windows installer / Linux AppImage still to be produced locally.
 
 ## Phase 5 — Releasegraph ⬜
 

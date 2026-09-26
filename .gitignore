@@ -17,6 +17,8 @@ src-tauri/resources/webui/*
 # stand-in (dev-backend.mjs) so a fresh clone runs light until fetch runs.
 src-tauri/resources/runtime/pixivflow/dist/
 src-tauri/resources/runtime/pixivflow/node_modules/
+src-tauri/resources/runtime/pixivflow/node
+src-tauri/resources/runtime/pixivflow/node.exe
 src-tauri/resources/runtime/pixivflow/package.json
 src-tauri/resources/runtime/pixivflow/package-lock.json
 
@@ -33,7 +35,10 @@ Thumbs.db
 
 dist/
 # Version the bundled WebUI placeholder contract (方案 A); the real dist from
-# F2.3 overwrites src-tauri/resources/webui/dist/ at build time.
+# pixivflow-webui overwrites src-tauri/resources/webui/dist/ at build time
+# (F4.1): assets/ stay a local artifact, index.html is tracked as placeholder.
 !src-tauri/resources/webui/
 !src-tauri/resources/webui/dist/
 !src-tauri/resources/webui/dist/index.html
+# the real WebUI bundle (assets/) is a build product — only the placeholder above
+src-tauri/resources/webui/dist/assets/

@@ -25,10 +25,11 @@ pub fn emit_status(app: &AppHandle) {
 }
 
 /// Poll health for the background auto-start path in lib.rs.
-pub fn poll_health_for(app: &AppHandle) {
+pub fn poll_health_for(app: &AppHandle) -> bool {
     let state = app.state::<ManagedState>();
-    poll_health(&state, app, 15);
+    let healthy = poll_health(&state, app, 15);
     emit_status(app);
+    healthy
 }
 
 fn snapshot(state: &ManagedState) -> StatusSnapshot {
@@ -65,7 +66,8 @@ fn snapshot(state: &ManagedState) -> StatusSnapshot {
 
 /// Poll the health endpoint until it returns 200 or the attempt budget runs out.
 /// Each probe result is pushed to the frontend as a `backend-status` event.
-fn poll_health(state: &ManagedState, app: &AppHandle, attempts: u32) {
+/// Returns whether the backend reached healthy within the budget.
+fn poll_health(state: &ManagedState, app: &AppHandle, attempts: u32) -> bool {
     for i in 0..attempts {
         let probe = {
             let m = state.manager.lock().unwrap();
@@ -77,7 +79,7 @@ fn poll_health(state: &ManagedState, app: &AppHandle, attempts: u32) {
                 state.manager.lock().unwrap().report_err("");
                 state.log.info("health OK (/api/health -> 200)");
                 push_status(app, state);
-                return;
+                return true;
             }
             Ok(false) => {
                 state.manager.lock().unwrap().set_healthy(false);
@@ -92,6 +94,7 @@ fn poll_health(state: &ManagedState, app: &AppHandle, attempts: u32) {
     }
     state.log.warn("health not confirmed within attempt budget");
     push_status(app, state);
+    false
 }
 
 #[tauri::command]
@@ -161,6 +164,7 @@ pub fn apply_discovery(state: &ManagedState) -> (discovery::BackendDescriptor, b
         Some(LaunchSpec {
             command: d.command.clone(),
             env: d.extra_env(),
+            cwd: d.cwd(),
         })
     };
     state.manager.lock().unwrap().set_command_override(cmd);
@@ -266,9 +270,55 @@ fn open_in_default_viewer(path: &str) -> Result<(), String> {
 }
 
 
+/// Show (or create) the dedicated WebUI window pointing at the backend on
+/// `port`. Shared by the `open_webui` command and the auto-start path, so both
+/// a manual click and a normal launch end up in the same window.
+pub fn open_webui_window(app: &AppHandle, port: u16) -> Result<String, String> {
+    let base = format!("http://127.0.0.1:{port}/");
+    let url: tauri::Url = base.parse().map_err(|e| format!("bad url {base}: {e}"))?;
+    let win = match app.get_webview_window("webui") {
+        Some(win) => {
+            win.navigate(url).map_err(|e| format!("navigate WebUI: {e}"))?;
+            win
+        }
+        None => tauri::WebviewWindowBuilder::new(
+            app,
+            "webui",
+            tauri::WebviewUrl::External(url),
+        )
+        .title("PixivFlow")
+        .inner_size(1100.0, 780.0)
+        .min_inner_size(720.0, 520.0)
+        .center()
+        .build()
+        .map_err(|e| format!("open WebUI window: {e}"))?,
+    };
+    let _ = win.show();
+    let _ = win.set_focus();
+    Ok(base)
+}
+
+/// Record the backing scale factor of both windows in the desktop log. This is
+/// the first thing to check when the WebUI text renders blurry: a window built
+/// on a Retina display must report 2.0, not 1.0.
+pub fn log_scale_factors(app: &AppHandle) {
+    let Some(state) = app.try_state::<ManagedState>() else {
+        return;
+    };
+    let of = |label: &str| {
+        app.get_webview_window(label)
+            .and_then(|w| w.scale_factor().ok())
+    };
+    state.log.info(&format!(
+        "scale factors: launcher={:?} webui={:?}",
+        of("main"),
+        of("webui")
+    ));
+}
+
 /// Open the running backend's WebUI — 方案 A: the backend serves the bundled
 /// static dist (STATIC_PATH), and the desktop loads it in a dedicated webview
-/// window. Kept separate from the control shell so the user has both.
+/// window. Kept separate from the control shell so the user keeps both.
 #[tauri::command]
 pub fn open_webui(
     app: AppHandle,
@@ -278,25 +328,8 @@ pub fn open_webui(
     if !state.manager.lock().unwrap().is_running() {
         return Err(format!("backend 未运行(port {port})，无法打开 WebUI — 请先启动 backend"));
     }
-    let base = format!("http://127.0.0.1:{port}/");
-    let url: tauri::Url = base.parse().map_err(|e| format!("bad url {base}: {e}"))?;
-    match app.get_webview_window("webui") {
-        Some(win) => win
-            .navigate(url)
-            .map_err(|e| format!("navigate WebUI: {e}"))?,
-        None => {
-            tauri::WebviewWindowBuilder::new(
-                &app,
-                "webui",
-                tauri::WebviewUrl::External(url),
-            )
-            .title("PixivFlow")
-            .inner_size(1100.0, 780.0)
-            .min_inner_size(720.0, 520.0)
-            .build()
-            .map_err(|e| format!("open WebUI window: {e}"))?;
-        }
-    }
+    let base = open_webui_window(&app, port)?;
+    log_scale_factors(&app);
     state.log.info(&format!("opened WebUI at {base}"));
     Ok(base)
 }

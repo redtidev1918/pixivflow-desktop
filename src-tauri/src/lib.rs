@@ -90,7 +90,7 @@ pub struct ManagedState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_focus();
@@ -109,9 +109,15 @@ pub fn run() {
         ])
         .setup(|app| {
             // 0. point discovery at the installed bundle resources (no-op in dev,
-            //    where it falls back to the cargo manifest dir).
+            //    where it falls back to the cargo manifest dir) and give the real
+            //    backend a user-writable data root so it never writes into CWD.
             if let Ok(res_dir) = app.path().resource_dir() {
                 backend::discovery::set_resource_root(res_dir.clone());
+            }
+            if let Ok(data_dir) = app.path().app_local_data_dir() {
+                let data_dir = data_dir.join("pixivflow");
+                let _ = std::fs::create_dir_all(&data_dir);
+                backend::discovery::set_data_root(data_dir);
             }
 
             // 1. config
@@ -156,6 +162,7 @@ pub fn run() {
 
             // 3. auto-start the local backend in the background
             let app_handle = app.handle().clone();
+            let auto_port = cfg.port();
             if cfg.is_local() && cfg.backend.auto_start {
                 std::thread::spawn(move || {
                     {
@@ -164,14 +171,36 @@ pub fn run() {
                         let start_res = state.manager.lock().unwrap().start();
                         match start_res {
                             Ok(pid) => {
-                                state.log.info(&format!("auto-start: backend pid={pid}"))
+                                let adopted = state.manager.lock().unwrap().is_adopted();
+                                let what = if adopted { "adopted" } else { "started" };
+                                state.log.info(&format!("auto-start: backend {what} pid={pid}"));
                             }
                             Err(e) => {
                                 state.log.error(&format!("auto-start failed: {e}"))
                             }
                         }
                     }
-                    commands::poll_health_for(&app_handle);
+                    // 4. once the backend answers healthy, hand the user straight
+                    //    to the WebUI — no manual click on "打开 PixivFlow".
+                    //    Window creation must happen on the main thread.
+                    if commands::poll_health_for(&app_handle) {
+                        let opener = app_handle.clone();
+                        let _ = app_handle.run_on_main_thread(move || {
+                            match commands::open_webui_window(&opener, auto_port) {
+                                Ok(url) => {
+                                    commands::log_scale_factors(&opener);
+                                    if let Some(state) = opener.try_state::<ManagedState>() {
+                                        state.log.info(&format!("auto-open: WebUI at {url}"));
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(state) = opener.try_state::<ManagedState>() {
+                                        state.log.warn(&format!("auto-open WebUI failed: {e}"));
+                                    }
+                                }
+                            }
+                        });
+                    }
                 });
             }
 
@@ -180,8 +209,18 @@ pub fn run() {
 
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
+                // Closing the WebUI returns the user to the launcher, which stays
+                // open behind it; the backend keeps running. Closing the launcher
+                // is the app's exit: tear the WebUI window down with it and stop
+                // the backend so no orphan holds the port.
+                if window.label() == "webui" {
+                    return;
+                }
                 let h = window.app_handle().clone();
                 std::thread::spawn(move || {
+                    if let Some(webui) = h.get_webview_window("webui") {
+                        let _ = webui.close();
+                    }
                     if let Some(state) = h.try_state::<ManagedState>() {
                         match state.manager.lock().unwrap().stop() {
                             Ok(()) => state.log.info("window closed: backend stopped (graceful)"),
@@ -192,6 +231,27 @@ pub fn run() {
             }
         })
 
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // Quitting the app (Cmd+Q, the app menu, an AppleScript `quit`, a logout)
+    // never reaches the window close handler above, so the backend would be left
+    // orphaned holding the port. Stop it here as well: `stop()` is idempotent and
+    // adoption covers a backend that still survives an abrupt kill.
+    app.run(|handle, event| {
+        // Both variants are handled: `ExitRequested` covers the last window being
+        // destroyed / an explicit `exit()`, `Exit` covers a macOS quit (Cmd+Q,
+        // app menu, AppleScript `quit`), which tears the app down without ever
+        // reaching the window close handler.
+        let exiting = matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        );
+        if let (true, Some(state)) = (exiting, handle.try_state::<ManagedState>()) {
+            match state.manager.lock().unwrap().stop() {
+                Ok(()) => state.log.info(&format!("app exit ({event:?}): backend stopped (graceful)")),
+                Err(e) => state.log.warn(&format!("app exit: stop backend failed: {e}")),
+            }
+        }
+    });
 }
