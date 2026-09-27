@@ -3,7 +3,7 @@
 
   "components": {
     "pixivflow": {
-      "version": "3.0.2"
+      "version": "3.0.3"
     },
     "pixivflow-webui": {
       "version": "1.1.0"
