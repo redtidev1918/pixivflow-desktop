@@ -48,6 +48,24 @@ jobs:
       # the component, and formatting is a human decision here.
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  # The component lock pins the versions the release build fetches (pixivflow
+  # from npm, pixivflow-webui from its GitHub tag). If the lock names a version
+  # the source has not published yet, the build would silently fetch something
+  # older instead of the pinned one — so every PR and main push must prove the
+  # lock is fully publishable before anything builds.
+  component-lock:
+    name: component lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4.0.4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Every pinned version is available at its build source
+        run: node scripts/check-component-lock.mjs
+
   release-metadata:
     name: release metadata
     runs-on: ubuntu-latest
