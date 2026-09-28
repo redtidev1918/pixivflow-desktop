@@ -1,7 +1,7 @@
 {
   "name": "pixivflow-desktop",
   "productName": "PixivFlow Desktop",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "PixivFlow Desktop — native desktop shell, local backend lifecycle management and runtime status monitoring.",
