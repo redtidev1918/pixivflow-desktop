@@ -1,6 +1,6 @@
 [package]
 name = "pixivflow-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Cross-platform desktop shell for PixivFlow (Tauri 2). F1 — Desktop Shell MVP."
 authors = ["redtidev1918"]
 license = "MIT"
