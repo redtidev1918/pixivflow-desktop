@@ -25,6 +25,8 @@ import { join } from "node:path";
 
 const WEBUI_REPO = "https://github.com/redtidev1918/pixivflow-webui.git";
 const MANIFEST = "desktop-manifest.json";
+const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 const root = process.cwd();
 const fail = (msg) => { console.error("✗ " + msg); process.exitCode = 1; };
@@ -46,16 +48,20 @@ if (!components || typeof components !== "object") {
 
 // -- npm registry check (pixivflow) ----------------------------------------
 const runtimeVer = components.pixivflow?.version;
-if (typeof runtimeVer !== "string" || !runtimeVer) {
-  fail(`${MANIFEST}: components.pixivflow.version is missing`);
+if (typeof runtimeVer !== "string" || !SEMVER.test(runtimeVer)) {
+  fail(`${MANIFEST}: components.pixivflow.version must be an exact semantic version`);
 } else {
   try {
-    const out = execFileSync("npm", ["view", `pixivflow@${runtimeVer}`, "version"], {
+    // Windows resolves npm through its .cmd shim. Version validation above
+    // keeps manifest input from becoming shell syntax.
+    const out = execFileSync(NPM, ["view", `pixivflow@${runtimeVer}`, "version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"],
+      shell: process.platform === "win32",
     }).trim();
     ok(`pixivflow@${runtimeVer} is published on npm (resolves to ${out})`);
-  } catch {
+  } catch (error) {
+    console.error(`npm registry query failed: ${error.message}`);
     fail(`pixivflow@${runtimeVer} is NOT on the npm registry — the lock leads the published artifact`);
   }
 }
