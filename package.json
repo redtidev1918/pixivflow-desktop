@@ -13,6 +13,7 @@
     "test:frontend": "node --test src/frontend/*.test.mjs",
     "test:version": "node scripts/check-version-sync.mjs",
     "release:set-version": "node scripts/set-release-version.mjs",
+    "release:check-lock": "node scripts/check-component-lock.mjs",
     "test:dist": "node scripts/check-dist.mjs",
     "tauri": "tauri",
     "test:runtime": "node scripts/check-runtime.mjs",

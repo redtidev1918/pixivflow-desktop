@@ -40,11 +40,28 @@ Three files carry the desktop version and **must always agree** — the
 never needs a manual bump. Two fallbacks exist for when that cannot apply:
 
 - `npm run release:set-version <semver>` writes one version into all three files
-  (manual rehearsal).
-- `scripts/build-release` runs the same helper when it notices the committed
-  version disagrees with `RELEASE_VERSION` — shipping an installer whose bundle
-  version contradicts its release tag is worse than rewriting the files during
-  the build.
+  (manual rehearsal). It also validates afterwards that all three took the value
+  and that `.github/release-notes/<semver>.md` exists with the `本次更新`
+  heading (the same bar the `release-metadata` CI gate enforces), so a hand-cut
+  cannot pass the version bump and then stall on missing notes. Pass
+  `--dry-run` to check everything without touching any file.
+
+## Component lock
+
+[`desktop-manifest.json`](../desktop-manifest.json) pins the two halves of the
+bundled product: `components.pixivflow` (the backend runtime, fetched from npm)
+and `components['pixivflow-webui']` (the frontend, fetched from its GitHub tag
+`v<version>`). The lock must **never name a version the source has not published
+yet** — if it does, the build silently fetches an older published build instead
+of the pinned one (the drift that once shipped WebUI 1.1.0 inside a bundle whose
+lock said 2.0.0).
+
+`npm run release:check-lock` (`scripts/check-component-lock.mjs`) verifies both
+pins are genuinely available — the pixivflow version on the npm registry and the
+pixivflow-webui tag on GitHub — and exits 1 otherwise. It runs as its own
+`component-lock` CI job on every PR and main push, and `scripts/build-release`
+calls it before fetching, so a drifted lock fails the release build early
+instead of shipping a mismatched bundle.
 
 ## Asset contract
 

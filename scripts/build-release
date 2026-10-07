@@ -107,6 +107,13 @@ fi
 #     only the WebUI *server* and the committed index.html is a placeholder.
 # `npm run build` runs `postbuild`, whose `scripts/check-runtime.mjs` refuses the
 # committed dev stand-in, so both steps must land before it.
+#
+# Prove the component lock is publishable before fetching: if desktop-
+# manifest.json names a pixivflow version not on npm, or a pixivflow-webui tag
+# that does not exist on GitHub, the fetch below would (best case) pull an older
+# published build and ship a bundle that disagrees with the lock. Fail here
+# instead, before any bundle exists.
+node scripts/check-component-lock.mjs
 PIXIVFLOW_VERSION="$(node -p "require('./desktop-manifest.json').components.pixivflow.version")"
 WEBUI_VERSION="$(node -p "require('./desktop-manifest.json').components['pixivflow-webui'].version")"
 node scripts/fetch-pixivflow-runtime.mjs --source "pixivflow@${PIXIVFLOW_VERSION}"
